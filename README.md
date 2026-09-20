@@ -1,5 +1,16 @@
 # Kaggle Dataset Analysis & AI Research Workspace
 
+## Run the API
+
+From the project root, start the Python server:
+
+```powershell
+cd "C:\Users\vyom\OneDrive\Desktop\code\kaggle_datasetAnalysis"
+python -m uvicorn apps.api.app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Then open `apps/web/index.html` with VS Code Live Server. Keep the API terminal running while using the frontend.
+
 A research-focused open-source platform for exploring, analyzing, and understanding Kaggle datasets with the help of intelligent automated analysis, interactive visualizations, and an AI-assisted research workflow.
 
 ## Purpose

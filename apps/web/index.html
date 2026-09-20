@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kaggle Dataset Analysis Workspace</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --panel: #111827;
+        --panel-alt: #1f2937;
+        --text: #e5e7eb;
+        --muted: #9ca3af;
+        --accent: #38bdf8;
+        --accent-2: #34d399;
+        --danger: #f87171;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: linear-gradient(135deg, #020817, #0f172a 60%);
+        color: var(--text);
+      }
+      .app {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+      .header h1 {
+        margin: 0;
+        font-size: 2rem;
+      }
+      .top-controls {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .btn {
+        border: none;
+        padding: 10px 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        background: var(--accent);
+        color: #082f49;
+        font-weight: 700;
+      }
+      .secondary {
+        background: var(--panel-alt);
+        color: var(--text);
+        border: 1px solid #334155;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1.1fr 2.2fr;
+        gap: 20px;
+      }
+      .panel {
+        background: rgba(15, 23, 42, 0.82);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 12px;
+        padding: 18px;
+        box-shadow: 0 10px 20px rgba(15, 23, 42, 0.2);
+      }
+      .panel h2, .panel h3 {
+        margin-top: 0;
+      }
+      .search-box {
+        display: flex;
+        gap: 8px;
+        margin: 12px 0 18px;
+      }
+      .search-box input {
+        flex: 1;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid #475569;
+        background: #0b1220;
+        color: var(--text);
+      }
+      .results {
+        display: grid;
+        gap: 12px;
+      }
+      .result-item {
+        background: rgba(30, 41, 59, 0.8);
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .result-item strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+      .stat-card {
+        background: rgba(15, 118, 110, 0.18);
+        border: 1px solid rgba(52, 211, 153, 0.4);
+        border-radius: 10px;
+        padding: 12px;
+      }
+      .stat-card .label {
+        font-size: 12px;
+        color: var(--muted);
+        display: block;
+      }
+      .stat-card .value {
+        font-size: 1.6rem;
+        font-weight: 700;
+        margin-top: 4px;
+      }
+      .insights ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--text);
+      }
+      .recommendations {
+        margin-top: 18px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .chip {
+        background: rgba(56, 189, 248, 0.14);
+        color: var(--text);
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 0.85rem;
+      }
+      .chart-area {
+        margin-top: 16px;
+        min-height: 320px;
+        background: rgba(15, 23, 42, 0.7);
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+      }
+      .editor {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 8px;
+        margin-top: 16px;
+      }
+      .editor select, .editor input {
+        width: 100%;
+        padding: 9px 10px;
+        border-radius: 8px;
+        border: 1px solid #475569;
+        background: #0b1220;
+        color: var(--text);
+      }
+      .chart-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 14px;
+        margin-top: 16px;
+      }
+      .chart-card {
+        min-width: 0;
+        padding: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.55);
+      }
+      .chart-card h4 { margin: 0 0 8px; }
+      .chart-card .chart-area { min-height: 280px; margin-top: 10px; }
+      .findings {
+        margin-top: 18px;
+        border-top: 1px solid rgba(148, 163, 184, 0.2);
+        padding-top: 14px;
+      }
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="header">
+        <h1>Kaggle Dataset Analysis Workspace</h1>
+        <div class="top-controls">
+          <button class="btn secondary" id="load-demo-btn">Load Demo Data</button>
+          <button class="btn" id="analyze-btn">Analyze current dataset</button>
+        </div>
+      </div>
+
+      <div class="grid">
+        <aside class="panel">
+          <h2>Dataset search</h2>
+          <div class="search-box">
+            <input id="search-input" placeholder="Search Kaggle datasets..." />
+            <button class="btn" id="search-btn">Search</button>
+          </div>
+          <div id="results" class="results"></div>
+        </aside>
+
+        <main class="panel">
+          <h2>Dataset overview</h2>
+          <div id="dataset-info">No dataset loaded yet.</div>
+
+          <div class="stats" id="stats-container"></div>
+          <div class="insights"><ul id="quality-list"></ul></div>
+
+          <div class="insights">
+            <h3>Research snapshot</h3>
+            <ul id="insights-list"></ul>
+            <h3>Research questions</h3>
+            <ul id="questions-list"></ul>
+          </div>
+
+          <div class="recommendations" id="recommendations"></div>
+
+          <div class="chart-grid" id="visualization-editor" hidden>
+            <div class="chart-card" data-slot="0"><h4>Primary relationship</h4><div class="editor"><label>Type<select class="chart-type"></select></label><label>X field<select class="chart-x"></select></label><label>Y field<select class="chart-y"></select></label></div><div class="chart-area"></div></div>
+            <div class="chart-card" data-slot="1"><h4>Distribution or categories</h4><div class="editor"><label>Type<select class="chart-type"></select></label><label>X field<select class="chart-x"></select></label><label>Y field<select class="chart-y"></select></label></div><div class="chart-area"></div></div>
+            <div class="chart-card" data-slot="2"><h4>Quality and comparison</h4><div class="editor"><label>Type<select class="chart-type"></select></label><label>X field<select class="chart-x"></select></label><label>Y field<select class="chart-y"></select></label></div><div class="chart-area"></div></div>
+          </div>
+          <div class="editor"><button class="btn secondary" id="save-finding-btn">Save finding</button><button class="btn secondary" id="export-notebook-btn">Export notebook</button></div>
+          <div class="findings" id="findings" hidden>
+            <h3>Saved findings</h3>
+            <ul id="findings-list"></ul>
+          </div>
+          <div class="findings">
+            <h3>Ask about this dataset</h3>
+            <div class="search-box"><input id="question-input" placeholder="Ask a research question..." /><button class="btn secondary" id="question-btn">Run</button></div>
+            <div id="question-answer"></div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      const API_BASE = window.KAGGLE_API_BASE || new URLSearchParams(window.location.search).get('api') || 'http://localhost:8000';
+      const state = {
+        dataset: null,
+        analysis: null,
+        findings: [],
+      };
+
+      const searchInput = document.getElementById('search-input');
+      const resultsEl = document.getElementById('results');
+      const datasetInfoEl = document.getElementById('dataset-info');
+      const statsContainer = document.getElementById('stats-container');
+      const insightsList = document.getElementById('insights-list');
+      const questionsList = document.getElementById('questions-list');
+      const qualityList = document.getElementById('quality-list');
+      const recommendationsEl = document.getElementById('recommendations');
+      const editorEl = document.getElementById('visualization-editor');
+      const findingsEl = document.getElementById('findings');
+      const findingsListEl = document.getElementById('findings-list');
+      const questionInput = document.getElementById('question-input');
+      const questionAnswer = document.getElementById('question-answer');
+      const chartSlots = [...editorEl.querySelectorAll('.chart-card')].map((card) => ({
+        card,
+        type: card.querySelector('.chart-type'),
+        x: card.querySelector('.chart-x'),
+        y: card.querySelector('.chart-y'),
+        area: card.querySelector('.chart-area'),
+      }));
+
+      const chartTypes = [
+        ['histogram', 'Histogram'], ['scatter', 'Scatter'], ['bar', 'Bar'],
+        ['box', 'Box plot'], ['line', 'Line'], ['area', 'Area'],
+        ['violin', 'Violin'], ['heatmap', 'Heatmap'], ['stacked_bar', 'Stacked bar'],
+      ];
+
+      function fieldOptions(fields, includeBlank = false) {
+        return `${includeBlank ? '<option value="">None</option>' : ''}${fields.map((field) => `<option value="${field}">${field}</option>`).join('')}`;
+      }
+
+      function renderChart(slot) {
+        if (!state.analysis) return;
+        const rows = state.analysis.preview || [];
+        const type = slot.type.value;
+        const x = slot.x.value;
+        const y = slot.y.value;
+        const values = rows.map((row) => row[x]).filter((value) => value !== null && value !== undefined);
+        let trace;
+        if (type === 'histogram') trace = {type, x: values, name: x};
+        else if (type === 'bar') {
+          const counts = {};
+          values.forEach((value) => { counts[value] = (counts[value] || 0) + 1; });
+          trace = {type, x: Object.keys(counts), y: Object.values(counts), name: x};
+        } else if (type === 'box' || type === 'violin') trace = {type, x: rows.map((row) => row[x]), y: rows.map((row) => row[y]), name: `${y} by ${x}`};
+        else if (type === 'heatmap') {
+          const numeric = state.analysis.numeric_columns || [];
+          const matrix = numeric.map((a) => numeric.map((b) => state.analysis.relationship_summary.find((r) => (r.column_a === a && r.column_b === b) || (r.column_a === b && r.column_b === a))?.correlation || (a === b ? 1 : 0)));
+          trace = {type, z: matrix, x: numeric, y: numeric, colorscale: 'Viridis'};
+        } else if (type === 'bar' || type === 'stacked_bar') {
+          const counts = {}; values.forEach((value) => { counts[value] = (counts[value] || 0) + 1; });
+          trace = {type: 'bar', x: Object.keys(counts), y: Object.values(counts), name: x};
+        } else trace = {type, x: values, y: rows.map((row) => row[y]), fill: type === 'area' ? 'tozeroy' : undefined, name: `${x} vs ${y}`};
+        Plotly.react(slot.area, [trace], {title: trace.name || type, margin: {t: 40}, paper_bgcolor: '#0f172a', plot_bgcolor: '#0f172a', font: {color: '#e5e7eb'}}, {responsive: true});
+      }
+
+      function configureChartSlot(slot, recommendation, fields) {
+        slot.type.innerHTML = chartTypes.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
+        slot.x.innerHTML = fieldOptions(fields);
+        slot.y.innerHTML = fieldOptions(fields, true);
+        slot.type.value = chartTypes.some(([value]) => value === recommendation?.type) ? recommendation.type : 'histogram';
+        slot.x.value = recommendation?.x || fields[0] || '';
+        slot.y.value = recommendation?.y || fields[1] || fields[0] || '';
+        [slot.type, slot.x, slot.y].forEach((control) => control.addEventListener('change', () => renderChart(slot)));
+        renderChart(slot);
+      }
+
+      function renderFindings() {
+        findingsEl.hidden = state.findings.length === 0;
+        findingsListEl.innerHTML = state.findings.map((finding) => `<li><strong>${finding.title}</strong>: ${finding.summary}</li>`).join('');
+      }
+
+      async function searchDatasets() {
+        const query = searchInput.value.trim();
+        if (!query) {
+          resultsEl.innerHTML = '<div class="result-item">Enter a dataset keyword to search.</div>';
+          return;
+        }
+        try {
+          const response = await fetch(`${API_BASE}/datasets/search?query=${encodeURIComponent(query)}&limit=5`);
+          const data = await response.json();
+          const results = data.results || [];
+          if (!results.length) {
+            resultsEl.innerHTML = '<div class="result-item">No results found.</div>';
+            return;
+          }
+
+          resultsEl.innerHTML = results
+            .map((item) => `
+              <div class="result-item">
+                <strong>${item.title || 'Dataset'}</strong>
+                <div>${item.subtitle || ''}</div>
+                <div style="margin-top: 8px; color: #9ca3af;">${item.size || ''}</div>
+                <button class="btn secondary" style="margin-top: 10px;" onclick="loadDatasetFromSlug('${item.slug || item.id || 'demo'}')">Analyze</button>
+                ${item.url ? `<a class="btn secondary" style="display: inline-block; margin: 10px 0 0 6px; text-decoration: none;" href="${item.url}" target="_blank" rel="noreferrer">View on Kaggle</a>` : ''}
+              </div>
+            `)
+            .join('');
+        } catch (error) {
+          resultsEl.innerHTML = '<div class="result-item">Search failed. Start the API server first.</div>';
+        }
+      }
+
+      async function loadDatasetFromSlug(slug) {
+        const response = await fetch(`${API_BASE}/datasets/download`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ slug }),
+        });
+
+        if (!response.ok) {
+          const payload = await response.json();
+          resultsEl.innerHTML = `<div class="result-item"><strong>Dataset unavailable</strong><div>${payload.detail || 'Unable to load this dataset from Kaggle.'}</div><div style="margin-top: 8px; color: #9ca3af;">This search result may have been removed or may require Kaggle access.</div></div>`;
+          return;
+        }
+
+        const json = await response.json();
+        state.dataset = json.dataset;
+        state.analysis = json.analysis;
+        renderAnalysis();
+      }
+
+      async function loadDemoData() {
+        const response = await fetch(`${API_BASE}/datasets/demo`);
+        const json = await response.json();
+        state.dataset = json.dataset;
+        state.analysis = json.analysis;
+        renderAnalysis();
+      }
+
+      function renderAnalysis() {
+        if (!state.analysis) return;
+
+        const snap = state.analysis.research_snapshot || {};
+        datasetInfoEl.innerHTML = `
+          <div><strong>Dataset:</strong> ${state.analysis.dataset_name}</div>
+          <div><strong>Rows:</strong> ${snap.rows ?? state.analysis.shape.rows}</div>
+          <div><strong>Columns:</strong> ${snap.columns ?? state.analysis.shape.columns}</div>
+        `;
+
+        statsContainer.innerHTML = `
+          <div class="stat-card"><span class="label">Rows</span><span class="value">${snap.rows ?? 0}</span></div>
+          <div class="stat-card"><span class="label">Columns</span><span class="value">${snap.columns ?? 0}</span></div>
+          <div class="stat-card"><span class="label">Missing</span><span class="value">${snap.missing_percentage ?? 0}%</span></div>
+          <div class="stat-card"><span class="label">Targets</span><span class="value">${snap.potential_targets ?? 0}</span></div>
+          <div class="stat-card"><span class="label">Correlations</span><span class="value">${snap.notable_relationships ?? 0}</span></div>
+          <div class="stat-card"><span class="label">Outliers</span><span class="value">${state.analysis.outlier_count ?? 0}</span></div>
+          <div class="stat-card"><span class="label">Quality issues</span><span class="value">${snap.data_quality_issues ?? 0}</span></div>
+          <div class="stat-card"><span class="label">High-cardinality</span><span class="value">${snap.high_cardinality_columns ?? 0}</span></div>
+          <div class="stat-card"><span class="label">Charts suggested</span><span class="value">${snap.recommended_visualizations ?? 0}</span></div>
+        `;
+
+        insightsList.innerHTML = (state.analysis.insights || []).map((insight) => `<li>${insight}</li>`).join('');
+        questionsList.innerHTML = (state.analysis.research_questions || []).map((question) => `<li>${question}</li>`).join('') || '<li>No research questions suggested yet.</li>';
+        qualityList.innerHTML = (state.analysis.data_quality_issues || []).map((issue) => `<li>${issue}</li>`).join('') || '<li>No major data-quality issues detected.</li>';
+
+        recommendationsEl.innerHTML = (state.analysis.recommendations || [])
+          .map((item) => `<span class="chip">${item.type}</span>`)
+          .join('');
+
+        const fields = Object.keys((state.analysis.preview || [])[0] || {});
+        if (fields.length) {
+          editorEl.hidden = false;
+          const recommendations = state.analysis.recommendations || [];
+          chartSlots.forEach((slot, index) => configureChartSlot(slot, recommendations[index], fields));
+        }
+
+        const firstRecommendation = (state.analysis.recommendations || [])[0];
+        if (firstRecommendation) {
+          renderChart(chartSlots[0]);
+        }
+        renderFindings();
+      }
+
+      document.getElementById('search-btn').addEventListener('click', searchDatasets);
+      document.getElementById('load-demo-btn').addEventListener('click', loadDemoData);
+      document.getElementById('analyze-btn').addEventListener('click', loadDemoData);
+      searchInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') searchDatasets();
+      });
+      document.getElementById('save-finding-btn').addEventListener('click', () => {
+        const slot = chartSlots[0];
+        const title = `${slot.type.value} of ${slot.x.value}`;
+        state.findings.push({title, summary: `Saved ${title} for ${state.analysis?.dataset_name || 'the active dataset'}.`});
+        renderFindings();
+      });
+      document.getElementById('export-notebook-btn').addEventListener('click', async () => {
+        if (!state.analysis) return;
+        const response = await fetch(`${API_BASE}/analysis/notebook`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({analysis: state.analysis, findings: state.findings})});
+        const notebook = await response.json();
+        const blob = new Blob([JSON.stringify(notebook, null, 2)], {type: 'application/json'});
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${state.analysis.dataset_name || 'analysis'}.ipynb`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+      });
+      document.getElementById('question-btn').addEventListener('click', async () => {
+        if (!state.analysis || !questionInput.value.trim()) return;
+        const response = await fetch(`${API_BASE}/analysis/question`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({question: questionInput.value, analysis: state.analysis})});
+        const result = await response.json();
+        questionAnswer.innerHTML = `<p><strong>Evidence-based answer</strong></p><p>${result.answer || result.detail}</p><ul>${(result.evidence || []).map((item) => `<li>${item}</li>`).join('')}</ul>`;
+      });
+    </script>
+  </body>
+</html>
