@@ -109,8 +109,11 @@ def _download_dataset_files_fallback(dataset_slug: str, target_dir: Path) -> Non
         file_name = file_info.get("name")
         if not file_name:
             continue
+        # file_name may itself contain "/" (files nested under a folder, common for
+        # notebook-sourced datasets), so it must be fully percent-encoded (safe="") rather than
+        # treated as literal path segments, or Kaggle 404s on the request.
         file_response = requests.get(
-            f"{KAGGLE_API_BASE}/datasets/download/{quote(owner)}/{quote(slug)}/{quote(file_name)}",
+            f"{KAGGLE_API_BASE}/datasets/download/{quote(owner)}/{quote(slug)}/{quote(file_name, safe='')}",
             **_kaggle_request_kwargs(),
         )
         file_response.raise_for_status()
@@ -136,17 +139,25 @@ def download_kaggle_dataset(dataset_slug: str, destination: str | None = None) -
         target_dir.mkdir(parents=True, exist_ok=True)
         import kagglehub
 
+        previous_cache = os.environ.get("KAGGLEHUB_CACHE")
+        os.environ["KAGGLEHUB_CACHE"] = str(target_dir / ".kagglehub-cache")
         try:
-            kagglehub.dataset_download(
-                dataset_slug.strip(),
-                output_dir=str(target_dir),
-                force_download=True,
-            )
-        except Exception as exc:
-            for child in target_dir.iterdir():
-                if child.is_file():
-                    child.unlink()
-            _download_dataset_files_fallback(dataset_slug.strip(), target_dir)
+            try:
+                kagglehub.dataset_download(
+                    dataset_slug.strip(),
+                    output_dir=str(target_dir),
+                    force_download=True,
+                )
+            except Exception:
+                for child in target_dir.iterdir():
+                    if child.is_file():
+                        child.unlink()
+                _download_dataset_files_fallback(dataset_slug.strip(), target_dir)
+        finally:
+            if previous_cache is None:
+                os.environ.pop("KAGGLEHUB_CACHE", None)
+            else:
+                os.environ["KAGGLEHUB_CACHE"] = previous_cache
     return str(target_dir)
 
 

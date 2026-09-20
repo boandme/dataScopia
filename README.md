@@ -11,6 +11,17 @@ python -m uvicorn apps.api.app.main:app --reload --host 127.0.0.1 --port 8000
 
 Then open `apps/web/index.html` with VS Code Live Server. Keep the API terminal running while using the frontend.
 
+### Storage model
+
+Dataset analysis does not require downloading the full dataset anywhere — not to the browser, and not to the API server. By default, `/datasets/analyze` streams only a bounded sample (`ANALYSIS_SAMPLE_MB`, default 5 MB) of the dataset's primary file directly from Kaggle: CSV/TSV files are read up to that byte limit and truncated at the last complete row, and Parquet files use HTTP range requests via `pyarrow`/`fsspec` to read only as many row groups as needed, using the file's footer metadata for an exact row count. Nothing is written to disk.
+
+Two opt-in paths exist for when a full copy is actually needed:
+
+- **Run full analysis** (`/datasets/analyze-full`) downloads the dataset to a temporary server workspace, profiles it in full, then deletes the workspace — useful when sample-based statistics aren't precise enough.
+- **Download full dataset** (`/datasets/download-file`) returns a ZIP archive of the raw files for the user to keep.
+
+Neither full-dataset path is required to get a Research Snapshot, recommended visualizations, or AI analysis.
+
 A research-focused open-source platform for exploring, analyzing, and understanding Kaggle datasets with the help of intelligent automated analysis, interactive visualizations, and an AI-assisted research workflow.
 
 ## Purpose

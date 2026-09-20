@@ -135,7 +135,9 @@ def _suggest_visualizations(df: pd.DataFrame, numeric_cols: list[str], categoric
     return recommended[:8]
 
 
-def analyze_dataframe(df: pd.DataFrame, dataset_name: str = "dataset") -> dict[str, Any]:
+def analyze_dataframe(
+    df: pd.DataFrame, dataset_name: str = "dataset", sample_info: dict[str, Any] | None = None
+) -> dict[str, Any]:
     columns = list(df.columns)
     rows, cols = df.shape
 
@@ -172,6 +174,20 @@ def analyze_dataframe(df: pd.DataFrame, dataset_name: str = "dataset") -> dict[s
     recommendations = _suggest_visualizations(df, numeric_cols, categorical_cols, datetime_cols)
 
     insights: list[str] = []
+    if sample_info and sample_info.get("is_sample"):
+        sample_bytes = sample_info.get("sample_bytes")
+        if not sample_bytes:
+            sample_mb = "a partial download"
+        elif sample_bytes < 1024 * 1024:
+            sample_mb = f"{sample_bytes / 1024:.0f} KB"
+        else:
+            sample_mb = f"{sample_bytes / (1024 * 1024):.1f} MB"
+        estimated_total = sample_info.get("estimated_total_rows")
+        estimate_note = f" out of an estimated {estimated_total:,} total rows" if estimated_total else ""
+        insights.append(
+            f"This analysis is based on a {sample_mb} sample ({rows:,} rows){estimate_note}. "
+            "Run a full analysis or download the dataset for complete results."
+        )
     if duplicate_rows:
         insights.append(f"{duplicate_rows} duplicate rows were detected.")
     if missing_cells:
@@ -232,6 +248,8 @@ def analyze_dataframe(df: pd.DataFrame, dataset_name: str = "dataset") -> dict[s
         "datetime_fields": len(datetime_cols),
         "constant_columns": len(constant_columns),
         "high_cardinality_columns": len(high_cardinality_columns),
+        "is_sample": bool(sample_info and sample_info.get("is_sample")),
+        "estimated_total_rows": (sample_info or {}).get("estimated_total_rows"),
     }
 
     return {
@@ -265,4 +283,5 @@ def analyze_dataframe(df: pd.DataFrame, dataset_name: str = "dataset") -> dict[s
         "high_cardinality_columns": high_cardinality_columns,
         "numeric_summary": numeric_summary,
         "research_questions": research_questions,
+        "sample": sample_info,
     }

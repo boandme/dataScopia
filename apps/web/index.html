@@ -164,7 +164,7 @@
       }
       .chart-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
         gap: 14px;
         margin-top: 16px;
       }
@@ -175,8 +175,36 @@
         border-radius: 10px;
         background: rgba(15, 23, 42, 0.55);
       }
-      .chart-card h4 { margin: 0 0 8px; }
-      .chart-card .chart-area { min-height: 280px; margin-top: 10px; }
+      .chart-card h4 { margin: 0 0 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .chart-card .chart-title-input {
+        width: 100%;
+        margin-top: 10px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid #475569;
+        background: #0b1220;
+        color: var(--text);
+        font-size: 0.85rem;
+      }
+      .chart-card .chart-area { position: relative; min-height: 320px; margin-top: 10px; }
+      /* Plotly's default modebar crowds badly at narrower widths; trim to essentials via JS
+         config and give it explicit breathing room + contrast here. */
+      .chart-area .modebar-container {
+        top: 2px !important;
+        right: 2px !important;
+      }
+      .chart-area .modebar {
+        background: rgba(11, 18, 32, 0.85) !important;
+        border-radius: 6px;
+        padding: 2px 3px !important;
+      }
+      .chart-area .modebar-btn {
+        padding: 4px !important;
+      }
+      .chart-area .modebar-btn svg {
+        width: 15px !important;
+        height: 15px !important;
+      }
       .findings {
         margin-top: 18px;
         border-top: 1px solid rgba(148, 163, 184, 0.2);
@@ -212,6 +240,11 @@
         <main class="panel">
           <h2>Dataset overview</h2>
           <div id="dataset-info">No dataset loaded yet.</div>
+          <div id="sample-banner" class="insights" hidden></div>
+          <div class="editor">
+            <button class="btn secondary" id="full-analysis-btn" hidden>Run full analysis</button>
+            <button class="btn secondary" id="download-full-btn" hidden>Download full dataset</button>
+          </div>
 
           <div class="stats" id="stats-container"></div>
           <div class="insights"><ul id="quality-list"></ul></div>
@@ -225,11 +258,25 @@
 
           <div class="recommendations" id="recommendations"></div>
 
-          <div class="chart-grid" id="visualization-editor" hidden>
-            <div class="chart-card" data-slot="0"><h4>Primary relationship</h4><div class="editor"><label>Type<select class="chart-type"></select></label><label>X field<select class="chart-x"></select></label><label>Y field<select class="chart-y"></select></label></div><div class="chart-area"></div></div>
-            <div class="chart-card" data-slot="1"><h4>Distribution or categories</h4><div class="editor"><label>Type<select class="chart-type"></select></label><label>X field<select class="chart-x"></select></label><label>Y field<select class="chart-y"></select></label></div><div class="chart-area"></div></div>
-            <div class="chart-card" data-slot="2"><h4>Quality and comparison</h4><div class="editor"><label>Type<select class="chart-type"></select></label><label>X field<select class="chart-x"></select></label><label>Y field<select class="chart-y"></select></label></div><div class="chart-area"></div></div>
+          <div id="viz-section" hidden>
+            <div class="editor"><button class="btn secondary" id="add-chart-btn">+ Add chart</button></div>
+            <div class="chart-grid" id="visualization-editor"></div>
           </div>
+          <template id="chart-card-template">
+            <div class="chart-card">
+              <h4><span class="chart-card-label"></span></h4>
+              <div class="editor">
+                <label>Type<select class="chart-type"></select></label>
+                <label>X field<select class="chart-x"></select></label>
+                <label>Y field<select class="chart-y"></select></label>
+                <label>Aggregate<select class="chart-agg"></select></label>
+                <label>Group by<select class="chart-group"></select></label>
+                <label>Sort<select class="chart-sort"></select></label>
+              </div>
+              <input class="chart-title-input" type="text" placeholder="Custom chart title (optional)" />
+              <div class="chart-area"></div>
+            </div>
+          </template>
           <div class="editor"><button class="btn secondary" id="save-finding-btn">Save finding</button><button class="btn secondary" id="export-notebook-btn">Export notebook</button></div>
           <div class="findings" id="findings" hidden>
             <h3>Saved findings</h3>
@@ -249,38 +296,103 @@
       const state = {
         dataset: null,
         analysis: null,
+        slug: null,
         findings: [],
       };
 
       const searchInput = document.getElementById('search-input');
       const resultsEl = document.getElementById('results');
       const datasetInfoEl = document.getElementById('dataset-info');
+      const sampleBannerEl = document.getElementById('sample-banner');
+      const fullAnalysisBtn = document.getElementById('full-analysis-btn');
+      const downloadFullBtn = document.getElementById('download-full-btn');
       const statsContainer = document.getElementById('stats-container');
       const insightsList = document.getElementById('insights-list');
       const questionsList = document.getElementById('questions-list');
       const qualityList = document.getElementById('quality-list');
       const recommendationsEl = document.getElementById('recommendations');
+      const vizSectionEl = document.getElementById('viz-section');
       const editorEl = document.getElementById('visualization-editor');
+      const chartTemplate = document.getElementById('chart-card-template');
+      const addChartBtn = document.getElementById('add-chart-btn');
       const findingsEl = document.getElementById('findings');
       const findingsListEl = document.getElementById('findings-list');
       const questionInput = document.getElementById('question-input');
       const questionAnswer = document.getElementById('question-answer');
-      const chartSlots = [...editorEl.querySelectorAll('.chart-card')].map((card) => ({
-        card,
-        type: card.querySelector('.chart-type'),
-        x: card.querySelector('.chart-x'),
-        y: card.querySelector('.chart-y'),
-        area: card.querySelector('.chart-area'),
-      }));
+      let chartSlots = [];
 
       const chartTypes = [
         ['histogram', 'Histogram'], ['scatter', 'Scatter'], ['bar', 'Bar'],
         ['box', 'Box plot'], ['line', 'Line'], ['area', 'Area'],
         ['violin', 'Violin'], ['heatmap', 'Heatmap'], ['stacked_bar', 'Stacked bar'],
+        ['pie', 'Pie'],
       ];
+      const aggregations = [
+        ['none', 'Raw values'], ['count', 'Count'], ['sum', 'Sum'],
+        ['mean', 'Average'], ['median', 'Median'], ['max', 'Max'], ['min', 'Min'],
+      ];
+      const sortOptions = [['none', 'Default order'], ['desc', 'Sort descending'], ['asc', 'Sort ascending']];
 
-      function fieldOptions(fields, includeBlank = false) {
-        return `${includeBlank ? '<option value="">None</option>' : ''}${fields.map((field) => `<option value="${field}">${field}</option>`).join('')}`;
+      // Trimmed modebar (default Plotly ships ~11 buttons, which overlap badly in a narrow
+      // card) plus no logo, so the remaining zoom/pan/reset/download controls have room.
+      const PLOTLY_CONFIG = {
+        responsive: true,
+        displaylogo: false,
+        modeBarButtonsToRemove: ['lasso2d', 'select2d', 'autoScale2d', 'toggleSpikelines', 'hoverClosestCartesian', 'hoverCompareCartesian'],
+        toImageButtonOptions: {format: 'png', scale: 2},
+      };
+      const PLOTLY_LAYOUT_BASE = {
+        margin: {t: 48, r: 16, l: 56, b: 46},
+        paper_bgcolor: '#0f172a',
+        plot_bgcolor: '#0f172a',
+        font: {color: '#e5e7eb'},
+        legend: {orientation: 'h', y: -0.2},
+      };
+
+      function fieldOptions(fields, includeBlank = false, blankLabel = 'None') {
+        return `${includeBlank ? `<option value="">${blankLabel}</option>` : ''}${fields.map((field) => `<option value="${field}">${field}</option>`).join('')}`;
+      }
+
+      function aggregateRows(rows, groupField, valueField, method) {
+        const groups = new Map();
+        rows.forEach((row) => {
+          const key = row[groupField];
+          if (key === null || key === undefined || key === '') return;
+          if (!groups.has(key)) groups.set(key, []);
+          if (method === 'count') {
+            groups.get(key).push(1);
+            return;
+          }
+          const v = Number(row[valueField]);
+          if (!Number.isNaN(v)) groups.get(key).push(v);
+        });
+        return [...groups.entries()].map(([key, values]) => {
+          let value;
+          if (!values.length) value = 0;
+          else if (method === 'count') value = values.length;
+          else if (method === 'sum') value = values.reduce((a, b) => a + b, 0);
+          else if (method === 'mean') value = values.reduce((a, b) => a + b, 0) / values.length;
+          else if (method === 'median') {
+            const sorted = [...values].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            value = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+          } else if (method === 'max') value = Math.max(...values);
+          else if (method === 'min') value = Math.min(...values);
+          else value = values[0];
+          return {key, value};
+        });
+      }
+
+      function applySort(entries, order) {
+        if (order === 'asc') return [...entries].sort((a, b) => a.value - b.value);
+        if (order === 'desc') return [...entries].sort((a, b) => b.value - a.value);
+        return entries;
+      }
+
+      function plotlyTypeFor(chartType) {
+        if (chartType === 'line' || chartType === 'area') return 'scatter';
+        if (chartType === 'stacked_bar') return 'bar';
+        return chartType;
       }
 
       function renderChart(slot) {
@@ -289,34 +401,123 @@
         const type = slot.type.value;
         const x = slot.x.value;
         const y = slot.y.value;
-        const values = rows.map((row) => row[x]).filter((value) => value !== null && value !== undefined);
-        let trace;
-        if (type === 'histogram') trace = {type, x: values, name: x};
-        else if (type === 'bar') {
-          const counts = {};
-          values.forEach((value) => { counts[value] = (counts[value] || 0) + 1; });
-          trace = {type, x: Object.keys(counts), y: Object.values(counts), name: x};
-        } else if (type === 'box' || type === 'violin') trace = {type, x: rows.map((row) => row[x]), y: rows.map((row) => row[y]), name: `${y} by ${x}`};
-        else if (type === 'heatmap') {
-          const numeric = state.analysis.numeric_columns || [];
-          const matrix = numeric.map((a) => numeric.map((b) => state.analysis.relationship_summary.find((r) => (r.column_a === a && r.column_b === b) || (r.column_a === b && r.column_b === a))?.correlation || (a === b ? 1 : 0)));
-          trace = {type, z: matrix, x: numeric, y: numeric, colorscale: 'Viridis'};
-        } else if (type === 'bar' || type === 'stacked_bar') {
-          const counts = {}; values.forEach((value) => { counts[value] = (counts[value] || 0) + 1; });
-          trace = {type: 'bar', x: Object.keys(counts), y: Object.values(counts), name: x};
-        } else trace = {type, x: values, y: rows.map((row) => row[y]), fill: type === 'area' ? 'tozeroy' : undefined, name: `${x} vs ${y}`};
-        Plotly.react(slot.area, [trace], {title: trace.name || type, margin: {t: 40}, paper_bgcolor: '#0f172a', plot_bgcolor: '#0f172a', font: {color: '#e5e7eb'}}, {responsive: true});
+        const agg = slot.agg.value;
+        const groupField = slot.group.value;
+        const sortOrder = slot.sort.value;
+        const customTitle = slot.titleInput.value.trim();
+        let traces = [];
+        let title = customTitle;
+
+        if (agg !== 'none' && x && type !== 'heatmap') {
+          const plotlyType = plotlyTypeFor(type);
+          const buildTrace = (subset, name) => {
+            let entries = aggregateRows(subset, x, y, agg);
+            entries = applySort(entries, sortOrder);
+            return {
+              type: plotlyType === 'pie' ? 'pie' : plotlyType,
+              mode: type === 'line' ? 'lines+markers' : undefined,
+              fill: type === 'area' ? 'tozeroy' : undefined,
+              x: plotlyType === 'pie' ? undefined : entries.map((e) => e.key),
+              y: plotlyType === 'pie' ? undefined : entries.map((e) => e.value),
+              labels: plotlyType === 'pie' ? entries.map((e) => e.key) : undefined,
+              values: plotlyType === 'pie' ? entries.map((e) => e.value) : undefined,
+              name,
+            };
+          };
+          if (groupField && groupField !== x) {
+            const groupValues = [...new Set(rows.map((r) => r[groupField]).filter((v) => v !== null && v !== undefined && v !== ''))].slice(0, 8);
+            traces = groupValues.map((gv) => buildTrace(rows.filter((r) => r[groupField] === gv), String(gv)));
+            title = title || `${agg} of ${agg === 'count' ? 'rows' : y} by ${x}, grouped by ${groupField}`;
+          } else {
+            traces = [buildTrace(rows, `${agg} of ${agg === 'count' ? 'rows' : y}`)];
+            title = title || `${agg} of ${agg === 'count' ? 'rows' : y} by ${x}`;
+          }
+        } else {
+          const values = rows.map((row) => row[x]).filter((value) => value !== null && value !== undefined);
+          if (type === 'histogram') {
+            traces = [{type, x: values, name: x}];
+            title = title || `Distribution of ${x}`;
+          } else if (type === 'pie') {
+            const counts = {};
+            values.forEach((value) => { counts[value] = (counts[value] || 0) + 1; });
+            traces = [{type: 'pie', labels: Object.keys(counts), values: Object.values(counts)}];
+            title = title || `Share of ${x}`;
+          } else if (type === 'box' || type === 'violin') {
+            traces = [{type, x: rows.map((row) => row[x]), y: rows.map((row) => row[y]), name: `${y} by ${x}`}];
+            title = title || `${y} by ${x}`;
+          } else if (type === 'heatmap') {
+            const numeric = state.analysis.numeric_columns || [];
+            const matrix = numeric.map((a) => numeric.map((b) => state.analysis.relationship_summary.find((r) => (r.column_a === a && r.column_b === b) || (r.column_a === b && r.column_b === a))?.correlation ?? (a === b ? 1 : 0)));
+            traces = [{type, z: matrix, x: numeric, y: numeric, colorscale: 'Viridis'}];
+            title = title || 'Correlation heatmap';
+          } else if (type === 'bar' || type === 'stacked_bar') {
+            const counts = {};
+            values.forEach((value) => { counts[value] = (counts[value] || 0) + 1; });
+            traces = [{type: 'bar', x: Object.keys(counts), y: Object.values(counts), name: x}];
+            title = title || `Counts by ${x}`;
+          } else {
+            const scatterType = plotlyTypeFor(type);
+            if (groupField) {
+              const groupValues = [...new Set(rows.map((r) => r[groupField]).filter((v) => v !== null && v !== undefined && v !== ''))].slice(0, 8);
+              traces = groupValues.map((gv) => {
+                const subset = rows.filter((r) => r[groupField] === gv);
+                return {
+                  type: scatterType, mode: type === 'line' ? 'lines+markers' : (type === 'scatter' ? 'markers' : undefined),
+                  fill: type === 'area' ? 'tozeroy' : undefined,
+                  x: subset.map((row) => row[x]), y: subset.map((row) => row[y]), name: String(gv),
+                };
+              });
+            } else {
+              traces = [{type: scatterType, mode: type === 'line' ? 'lines+markers' : (type === 'scatter' ? 'markers' : undefined), x: values, y: rows.map((row) => row[y]), fill: type === 'area' ? 'tozeroy' : undefined, name: `${x} vs ${y}`}];
+            }
+            title = title || `${x} vs ${y}`;
+          }
+        }
+
+        Plotly.react(slot.area, traces, {...PLOTLY_LAYOUT_BASE, title}, PLOTLY_CONFIG);
       }
 
-      function configureChartSlot(slot, recommendation, fields) {
-        slot.type.innerHTML = chartTypes.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
+      function createChartSlot(label, fields, recommendation) {
+        const node = chartTemplate.content.firstElementChild.cloneNode(true);
+        node.querySelector('.chart-card-label').textContent = label;
+        editorEl.appendChild(node);
+        const slot = {
+          card: node,
+          type: node.querySelector('.chart-type'),
+          x: node.querySelector('.chart-x'),
+          y: node.querySelector('.chart-y'),
+          agg: node.querySelector('.chart-agg'),
+          group: node.querySelector('.chart-group'),
+          sort: node.querySelector('.chart-sort'),
+          titleInput: node.querySelector('.chart-title-input'),
+          area: node.querySelector('.chart-area'),
+        };
+        slot.type.innerHTML = chartTypes.map(([value, text]) => `<option value="${value}">${text}</option>`).join('');
         slot.x.innerHTML = fieldOptions(fields);
         slot.y.innerHTML = fieldOptions(fields, true);
+        slot.agg.innerHTML = aggregations.map(([value, text]) => `<option value="${value}">${text}</option>`).join('');
+        slot.group.innerHTML = fieldOptions(fields, true, 'No grouping');
+        slot.sort.innerHTML = sortOptions.map(([value, text]) => `<option value="${value}">${text}</option>`).join('');
+
         slot.type.value = chartTypes.some(([value]) => value === recommendation?.type) ? recommendation.type : 'histogram';
         slot.x.value = recommendation?.x || fields[0] || '';
         slot.y.value = recommendation?.y || fields[1] || fields[0] || '';
-        [slot.type, slot.x, slot.y].forEach((control) => control.addEventListener('change', () => renderChart(slot)));
+        slot.agg.value = 'none';
+        slot.group.value = '';
+        slot.sort.value = 'none';
+
+        [slot.type, slot.x, slot.y, slot.agg, slot.group, slot.sort].forEach((control) => control.addEventListener('change', () => renderChart(slot)));
+        slot.titleInput.addEventListener('input', () => renderChart(slot));
         renderChart(slot);
+        chartSlots.push(slot);
+        return slot;
+      }
+
+      function rebuildChartSlots(fields, recommendations) {
+        editorEl.innerHTML = '';
+        chartSlots = [];
+        const labels = ['Primary relationship', 'Distribution or categories', 'Quality and comparison'];
+        labels.forEach((label, index) => createChartSlot(label, fields, recommendations[index]));
       }
 
       function renderFindings() {
@@ -355,8 +556,8 @@
         }
       }
 
-      async function loadDatasetFromSlug(slug) {
-        const response = await fetch(`${API_BASE}/datasets/download`, {
+      async function loadDatasetFromSlug(slug, endpoint = '/datasets/analyze') {
+        const response = await fetch(`${API_BASE}${endpoint}`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ slug }),
@@ -371,6 +572,9 @@
         const json = await response.json();
         state.dataset = json.dataset;
         state.analysis = json.analysis;
+        state.slug = slug;
+        downloadFullBtn.hidden = false;
+        fullAnalysisBtn.hidden = !(state.analysis?.sample?.is_sample);
         renderAnalysis();
       }
 
@@ -379,6 +583,9 @@
         const json = await response.json();
         state.dataset = json.dataset;
         state.analysis = json.analysis;
+        state.slug = null;
+        downloadFullBtn.hidden = true;
+        fullAnalysisBtn.hidden = true;
         renderAnalysis();
       }
 
@@ -391,6 +598,21 @@
           <div><strong>Rows:</strong> ${snap.rows ?? state.analysis.shape.rows}</div>
           <div><strong>Columns:</strong> ${snap.columns ?? state.analysis.shape.columns}</div>
         `;
+
+        const sample = state.analysis.sample;
+        if (sample && sample.is_sample) {
+          const sampleMb = sample.sample_bytes
+            ? (sample.sample_bytes < 1024 * 1024
+                ? `${Math.round(sample.sample_bytes / 1024)} KB`
+                : `${(sample.sample_bytes / (1024 * 1024)).toFixed(1)} MB`)
+            : 'a partial file';
+          const estimate = sample.estimated_total_rows ? ` (~${sample.estimated_total_rows.toLocaleString()} rows estimated total)` : '';
+          sampleBannerEl.hidden = false;
+          sampleBannerEl.innerHTML = `<div class="result-item">This analysis was computed from a ${sampleMb} streamed sample of <strong>${sample.file_name}</strong>${estimate} — no full download was required. Use "Run full analysis" for complete precision.</div>`;
+        } else {
+          sampleBannerEl.hidden = true;
+          sampleBannerEl.innerHTML = '';
+        }
 
         statsContainer.innerHTML = `
           <div class="stat-card"><span class="label">Rows</span><span class="value">${snap.rows ?? 0}</span></div>
@@ -414,19 +636,51 @@
 
         const fields = Object.keys((state.analysis.preview || [])[0] || {});
         if (fields.length) {
-          editorEl.hidden = false;
-          const recommendations = state.analysis.recommendations || [];
-          chartSlots.forEach((slot, index) => configureChartSlot(slot, recommendations[index], fields));
-        }
-
-        const firstRecommendation = (state.analysis.recommendations || [])[0];
-        if (firstRecommendation) {
-          renderChart(chartSlots[0]);
+          vizSectionEl.hidden = false;
+          rebuildChartSlots(fields, state.analysis.recommendations || []);
+        } else {
+          vizSectionEl.hidden = true;
         }
         renderFindings();
       }
 
+      addChartBtn.addEventListener('click', () => {
+        const fields = Object.keys((state.analysis?.preview || [])[0] || {});
+        if (!fields.length) return;
+        createChartSlot(`Custom chart ${chartSlots.length + 1}`, fields);
+      });
+
       document.getElementById('search-btn').addEventListener('click', searchDatasets);
+      fullAnalysisBtn.addEventListener('click', async () => {
+        if (!state.slug) return;
+        fullAnalysisBtn.textContent = 'Running full analysis...';
+        fullAnalysisBtn.disabled = true;
+        try {
+          await loadDatasetFromSlug(state.slug, '/datasets/analyze-full');
+        } finally {
+          fullAnalysisBtn.textContent = 'Run full analysis';
+          fullAnalysisBtn.disabled = false;
+          fullAnalysisBtn.hidden = true;
+        }
+      });
+      downloadFullBtn.addEventListener('click', async () => {
+        if (!state.slug) return;
+        const response = await fetch(`${API_BASE}/datasets/download-file`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({slug: state.slug}),
+        });
+        if (!response.ok) {
+          resultsEl.innerHTML = '<div class="result-item">The full dataset download failed. Analysis results are still available.</div>';
+          return;
+        }
+        const blob = await response.blob();
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${state.slug.replace('/', '-')}.zip`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+      });
       document.getElementById('load-demo-btn').addEventListener('click', loadDemoData);
       document.getElementById('analyze-btn').addEventListener('click', loadDemoData);
       searchInput.addEventListener('keydown', (event) => {
@@ -434,6 +688,7 @@
       });
       document.getElementById('save-finding-btn').addEventListener('click', () => {
         const slot = chartSlots[0];
+        if (!slot) return;
         const title = `${slot.type.value} of ${slot.x.value}`;
         state.findings.push({title, summary: `Saved ${title} for ${state.analysis?.dataset_name || 'the active dataset'}.`});
         renderFindings();
@@ -451,9 +706,22 @@
       });
       document.getElementById('question-btn').addEventListener('click', async () => {
         if (!state.analysis || !questionInput.value.trim()) return;
-        const response = await fetch(`${API_BASE}/analysis/question`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({question: questionInput.value, analysis: state.analysis})});
+        questionAnswer.innerHTML = '<p>Computing...</p>';
+        const response = await fetch(`${API_BASE}/analysis/question`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({question: questionInput.value, analysis: state.analysis, dataset_id: state.dataset?.dataset_id}),
+        });
         const result = await response.json();
-        questionAnswer.innerHTML = `<p><strong>Evidence-based answer</strong></p><p>${result.answer || result.detail}</p><ul>${(result.evidence || []).map((item) => `<li>${item}</li>`).join('')}</ul>`;
+        if (!response.ok) {
+          questionAnswer.innerHTML = `<p>${result.detail || 'Could not answer this question.'}</p>`;
+          return;
+        }
+        const badge = result.computed
+          ? `<span class="chip" style="background: rgba(52, 211, 153, 0.16); border-color: rgba(52, 211, 153, 0.4);">computed: ${result.method}</span>`
+          : `<span class="chip" style="background: rgba(248, 113, 113, 0.14); border-color: rgba(248, 113, 113, 0.35);">not computed</span>`;
+        const codeLine = result.code ? `<div style="margin-top: 6px; font-family: monospace; font-size: 0.8rem; color: var(--muted);">${result.code}</div>` : '';
+        questionAnswer.innerHTML = `<p><strong>Answer</strong> ${badge}</p><p>${result.answer || 'No answer available.'}</p>${codeLine}`;
       });
     </script>
   </body>

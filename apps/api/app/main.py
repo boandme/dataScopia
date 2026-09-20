@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -15,22 +18,27 @@ if str(PROJECT_ROOT) not in sys.path:
 
 ANALYSIS_SRC = PROJECT_ROOT / "packages" / "analysis" / "src"
 DATASET_SRC = PROJECT_ROOT / "packages" / "dataset" / "src"
-for path in (ANALYSIS_SRC, DATASET_SRC):
+APP_DIR = Path(__file__).resolve().parent
+for path in (ANALYSIS_SRC, DATASET_SRC, APP_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from analysis.profiler import analyze_dataframe
 from analysis.notebook_export import build_notebook
+from analysis.qa_engine import answer_question
 from dataset.kaggle_search import (
     download_kaggle_dataset,
     kaggle_credential_status,
     search_kaggle_datasets,
 )
 from dataset.loader import load_dataset
+from dataset.streaming import DEFAULT_SAMPLE_BYTES, load_dataset_sample
+import workspace_cache
 
 app = FastAPI(title=os.getenv("APP_TITLE", "Kaggle Dataset Analysis Workspace"))
 app.add_middleware(
@@ -41,13 +49,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# How much of a dataset file to stream for sample-based analysis before analysis falls back to
+# asking the user to run a full analysis or full download. Configurable since it trades off
+# analysis fidelity against bandwidth/time for very large files.
+SAMPLE_BYTES = int(float(os.getenv("ANALYSIS_SAMPLE_MB", "5")) * 1024 * 1024) or DEFAULT_SAMPLE_BYTES
+
 
 def _serializable_dataset(dataset: dict[str, object]) -> dict[str, object]:
-    return {key: value for key, value in dataset.items() if key != "dataframe"}
+    return {key: value for key, value in dataset.items() if key not in {"dataframe", "path"}}
 
 
-def _analysis_with_preview(df: pd.DataFrame, dataset_name: str) -> dict[str, object]:
-    analysis = analyze_dataframe(df, dataset_name=dataset_name)
+def _cache_dataset(dataset: dict[str, object], df: pd.DataFrame, dataset_id: str) -> None:
+    """Cache the dataframe server-side (in-memory, TTL-bounded) so follow-up questions about
+    this dataset can compute real answers without re-fetching it from Kaggle each time."""
+    workspace_cache.put(dataset_id, df)
+    dataset["dataset_id"] = dataset_id
+
+
+def _analysis_with_preview(df: pd.DataFrame, dataset_name: str, sample_info: dict[str, object] | None = None) -> dict[str, object]:
+    analysis = analyze_dataframe(df, dataset_name=dataset_name, sample_info=sample_info)
     analysis["preview"] = json.loads(df.head(300).to_json(orient="records", date_format="iso"))
     return analysis
 
@@ -78,29 +98,77 @@ def load_dataset_from_path(payload: dict[str, str]) -> dict[str, object]:
     try:
         dataset = load_dataset(path)
         df = dataset["dataframe"]
+        _cache_dataset(dataset, df, dataset_id=f"local-{dataset['name']}")
         analysis = _analysis_with_preview(df, dataset["name"])
         return {"dataset": _serializable_dataset(dataset), "analysis": analysis}
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.post("/datasets/download")
-def download_dataset_from_kaggle(payload: dict[str, str]) -> dict[str, object]:
+@app.post("/datasets/analyze")
+def analyze_dataset_from_kaggle(payload: dict[str, object]) -> dict[str, object]:
+    """Profile a Kaggle dataset by streaming only a bounded sample of its primary data file.
+
+    This never downloads the dataset in full: for CSV/TSV it stops reading once enough bytes
+    have been streamed, and for Parquet it reads only as many row groups as needed via HTTP
+    range requests. Use /datasets/analyze-full or /datasets/download-file when a complete copy
+    is actually required.
+    """
+    slug = payload.get("slug") or payload.get("dataset_slug")
+    if not slug:
+        raise HTTPException(status_code=400, detail="A Kaggle dataset slug is required.")
+    sample_bytes = int(payload.get("sample_bytes") or SAMPLE_BYTES)
+
+    try:
+        dataset = load_dataset_sample(str(slug), max_sample_bytes=sample_bytes)
+        df = dataset["dataframe"]
+        _cache_dataset(dataset, df, dataset_id=str(slug))
+        analysis = _analysis_with_preview(df, dataset["name"], sample_info=dataset.get("sample"))
+        return {"dataset": _serializable_dataset(dataset), "analysis": analysis}
+    except Exception as exc:  # pragma: no cover
+        detail = str(exc)
+        status_code = 404 if "Resource not found" in detail or "404" in detail else 500
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
+@app.post("/datasets/analyze-full")
+def analyze_dataset_full(payload: dict[str, str]) -> dict[str, object]:
+    """Download a Kaggle dataset in full to a temporary server workspace, analyze it, then
+    delete the workspace. Opt-in for cases where sample-based analysis isn't precise enough;
+    never required for the default research snapshot."""
     slug = payload.get("slug") or payload.get("dataset_slug")
     if not slug:
         raise HTTPException(status_code=400, detail="A Kaggle dataset slug is required.")
 
     try:
-        dataset_path = download_kaggle_dataset(slug)
-        dataset = load_dataset(dataset_path)
-        df = dataset["dataframe"]
-        analysis = _analysis_with_preview(df, dataset["name"])
-        return {
-            "dataset": _serializable_dataset(dataset),
-            "analysis": analysis,
-            "local_path": dataset_path,
-        }
+        with tempfile.TemporaryDirectory(prefix="kaggle-analysis-") as workspace:
+            dataset_path = download_kaggle_dataset(slug, destination=workspace)
+            dataset = load_dataset(dataset_path)
+            df = dataset["dataframe"]
+            _cache_dataset(dataset, df, dataset_id=str(slug))
+            analysis = _analysis_with_preview(df, dataset["name"])
+            return {"dataset": _serializable_dataset(dataset), "analysis": analysis}
     except Exception as exc:  # pragma: no cover
+        detail = str(exc)
+        status_code = 404 if "Resource not found" in detail or "404" in detail else 500
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
+@app.post("/datasets/download-file")
+def download_full_dataset(payload: dict[str, str], background_tasks: BackgroundTasks) -> FileResponse:
+    slug = payload.get("slug") or payload.get("dataset_slug")
+    if not slug:
+        raise HTTPException(status_code=400, detail="A Kaggle dataset slug is required.")
+
+    workspace = tempfile.mkdtemp(prefix="kaggle-export-")
+    try:
+        dataset_path = download_kaggle_dataset(slug, destination=workspace)
+        archive_base = str(Path(workspace) / Path(slug.replace("/", "-")))
+        archive_path = Path(shutil.make_archive(archive_base, "zip", dataset_path))
+        background_tasks.add_task(shutil.rmtree, workspace, ignore_errors=True)
+        return FileResponse(archive_path, filename=f"{slug.replace('/', '-')}.zip", media_type="application/zip", background=background_tasks)
+    except Exception as exc:
+        shutil.rmtree(workspace, ignore_errors=True)
         detail = str(exc)
         status_code = 404 if "Resource not found" in detail or "404" in detail else 500
         raise HTTPException(status_code=status_code, detail=detail) from exc
@@ -117,6 +185,7 @@ async def upload_dataset(file: UploadFile = File(...)) -> dict[str, object]:
 
         dataset = load_dataset(temp_path)
         df = dataset["dataframe"]
+        _cache_dataset(dataset, df, dataset_id=f"upload-{uuid.uuid4().hex[:10]}")
         analysis = _analysis_with_preview(df, dataset["name"])
         return {"dataset": _serializable_dataset(dataset), "analysis": analysis}
     except Exception as exc:  # pragma: no cover
@@ -133,18 +202,54 @@ def export_analysis_notebook(payload: dict[str, object]) -> dict[str, object]:
 
 @app.post("/analysis/question")
 def answer_analysis_question(payload: dict[str, object]) -> dict[str, object]:
+    """Answer a question with a real computation over the dataset, not a canned summary.
+
+    Uses the server-side cached dataframe for the dataset (populated by the analyze/upload/load
+    endpoints) when available, so repeated questions don't require re-fetching from Kaggle. Falls
+    back to the up-to-300-row preview already known to the frontend if the cache has expired or
+    was never populated (e.g. an old session), clearly flagging the lower-fidelity answer.
+
+    This is deterministic/rule-based today (no external LLM call). The engine in
+    analysis.qa_engine exposes a stable (question, dataframe) -> result contract so it can be
+    swapped for an LLM-backed implementation later without changing this endpoint or the frontend.
+    """
     question = str(payload.get("question") or "").strip()
-    analysis = payload.get("analysis") or {}
     if not question:
         raise HTTPException(status_code=400, detail="A research question is required.")
+
+    analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
+    dataset_id = payload.get("dataset_id")
     snapshot = analysis.get("research_snapshot", {})
-    answer = (
-        f"The active dataset contains {snapshot.get('rows', 0)} observations and "
-        f"{snapshot.get('columns', 0)} variables. Based on the current profile, "
-        f"{snapshot.get('notable_relationships', 0)} notable numeric relationships and "
-        f"{snapshot.get('data_quality_issues', 0)} data-quality issues were detected."
-    )
-    return {"question": question, "answer": answer, "evidence": analysis.get("insights", [])}
+
+    df = workspace_cache.get(str(dataset_id)) if dataset_id else None
+    used_preview_fallback = False
+    if df is None:
+        preview = analysis.get("preview")
+        if preview:
+            df = pd.DataFrame(preview)
+            used_preview_fallback = True
+
+    if df is None or df.empty:
+        raise HTTPException(
+            status_code=400,
+            detail="No dataset data is available to answer this question. Analyze a dataset first.",
+        )
+
+    result = answer_question(question, df, snapshot=snapshot)
+    answer_text = result.answer
+    if used_preview_fallback and result.computed:
+        answer_text += " (Computed from the loaded preview rows only; re-analyze for a full-sample answer.)"
+
+    return {
+        "question": question,
+        "answer": answer_text,
+        "computed": result.computed,
+        "method": result.method,
+        "code": result.code,
+        "value": result.value,
+        "columns_used": result.columns_used,
+        "evidence": analysis.get("insights", []),
+    }
 
 
 @app.get("/datasets/demo")
@@ -158,7 +263,11 @@ def demo_dataset() -> dict[str, object]:
             "year": [2023, 2023, 2023, 2023, 2023, 2023, 2023, 2023],
         }
     )
-    return {"dataset": {"name": "demo_dataset", "shape": {"rows": len(df), "columns": len(df.columns)}}, "analysis": analyze_dataframe(df, dataset_name="demo_dataset")}
+    workspace_cache.put("demo", df)
+    return {
+        "dataset": {"name": "demo_dataset", "dataset_id": "demo", "shape": {"rows": len(df), "columns": len(df.columns)}},
+        "analysis": analyze_dataframe(df, dataset_name="demo_dataset"),
+    }
 
 
 @app.get("/")
