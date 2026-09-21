@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import os
 from pathlib import Path
 from typing import Any
@@ -7,7 +8,7 @@ from typing import Any
 import pandas as pd
 
 
-DATASET_FILE_EXTENSIONS = {".csv", ".parquet", ".xlsx", ".xls", ".json"}
+DATASET_FILE_EXTENSIONS = {".csv", ".tsv", ".parquet", ".xlsx", ".xls", ".json"}
 
 
 def find_dataset_files(directory: str | os.PathLike[str]) -> list[str]:
@@ -42,6 +43,8 @@ def load_dataset(dataset_path: str | os.PathLike[str], file_name: str | None = N
 
     if suffix == ".csv":
         df = pd.read_csv(main_file)
+    elif suffix == ".tsv":
+        df = pd.read_csv(main_file, sep="\t")
     elif suffix == ".parquet":
         df = pd.read_parquet(main_file)
     elif suffix in {".xlsx", ".xls"}:
@@ -59,3 +62,21 @@ def load_dataset(dataset_path: str | os.PathLike[str], file_name: str | None = N
         "columns": list(df.columns),
         "dataframe": df,
     }
+
+
+def load_dataframe_from_bytes(filename: str, contents: bytes) -> pd.DataFrame:
+    """Parse an uploaded file entirely in memory (no disk write), so a user-supplied CSV never
+    needs to touch the server's filesystem to be analyzed."""
+    suffix = Path(filename).suffix.lower()
+    buffer = io.BytesIO(contents)
+    if suffix == ".csv":
+        return pd.read_csv(buffer)
+    if suffix == ".tsv":
+        return pd.read_csv(buffer, sep="\t")
+    if suffix == ".parquet":
+        return pd.read_parquet(buffer)
+    if suffix in {".xlsx", ".xls"}:
+        return pd.read_excel(buffer)
+    if suffix == ".json":
+        return pd.read_json(buffer)
+    raise ValueError(f"Unsupported dataset format: {suffix}")

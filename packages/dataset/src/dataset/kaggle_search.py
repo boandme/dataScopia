@@ -161,7 +161,10 @@ def download_kaggle_dataset(dataset_slug: str, destination: str | None = None) -
     return str(target_dir)
 
 
-def search_kaggle_datasets(query: str, page_size: int = 10, max_results: int = 10) -> list[dict[str, Any]]:
+MAX_SEARCH_PAGES = 15  # Kaggle returns ~20 results/page; caps a single search at ~300 datasets
+
+
+def search_kaggle_datasets(query: str, max_results: int = 60) -> list[dict[str, Any]]:
     if not validate_kaggle_credentials():
         return [
             {
@@ -178,22 +181,38 @@ def search_kaggle_datasets(query: str, page_size: int = 10, max_results: int = 1
 
         api = KaggleApi()
         api.authenticate()
-        datasets = api.dataset_list(search=query, max_size=page_size, file_type=None, sort_by="hottest")
-        payload = []
-        for item in datasets[:max_results]:
-            metadata = getattr(item, "__dict__", {})
-            dataset_ref = getattr(item, "ref", None) or getattr(item, "dataset", None) or metadata.get("ref")
-            payload.append(
-                {
-                    "id": dataset_ref,
-                    "slug": dataset_ref,
-                    "title": getattr(item, "title", None) or metadata.get("title"),
-                    "subtitle": getattr(item, "subtitle", None) or metadata.get("subtitle"),
-                    "url": getattr(item, "url", None) or metadata.get("url"),
-                    "size": getattr(item, "size", None) or metadata.get("size"),
-                    "is_demo": False,
-                }
-            )
+        payload: list[dict[str, Any]] = []
+        seen_refs: set[str] = set()
+        page = 1
+        # Kaggle's dataset_list only returns one page (~20 results) per call; the UI shows
+        # hundreds of matches because it pages through results, so we do the same here instead
+        # of silently capping search to the first page.
+        while len(payload) < max_results and page <= MAX_SEARCH_PAGES:
+            datasets = api.dataset_list(search=query, sort_by="hottest", page=page)
+            if not datasets:
+                break
+            for item in datasets:
+                metadata = getattr(item, "__dict__", {})
+                dataset_ref = getattr(item, "ref", None) or getattr(item, "dataset", None) or metadata.get("ref")
+                if not dataset_ref or dataset_ref in seen_refs:
+                    continue
+                seen_refs.add(dataset_ref)
+                payload.append(
+                    {
+                        "id": dataset_ref,
+                        "slug": dataset_ref,
+                        "title": getattr(item, "title", None) or metadata.get("title"),
+                        "subtitle": getattr(item, "subtitle", None) or metadata.get("subtitle"),
+                        "url": getattr(item, "url", None) or metadata.get("url"),
+                        "size": getattr(item, "size", None) or metadata.get("size"),
+                        "is_demo": False,
+                    }
+                )
+                if len(payload) >= max_results:
+                    break
+            if len(datasets) < 20:
+                break  # short page means we've reached the end of Kaggle's results
+            page += 1
         return payload
     except Exception as exc:
         return [

@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+import numpy as np
 import pandas as pd
 
 
@@ -31,6 +32,27 @@ def _singular(token: str) -> str:
     if token.endswith("s") and not token.endswith("ss") and len(token) > 3:
         return token[:-1]
     return token
+
+
+def _has_any(norm_text: str, phrases: tuple[str, ...]) -> bool:
+    """Trigger check that avoids matching short words inside unrelated ones (e.g. 'range'
+    inside 'orange', 'min' inside 'mining') by requiring single-word phrases to be a whole
+    token, while multi-word phrases still match as a normalized substring. A phrase ending in
+    '*' matches any token starting with that stem (e.g. 'correlat*' covers correlate/
+    correlated/correlation/correlations without enumerating every inflection)."""
+    tokens = norm_text.split()
+    token_set = set(tokens)
+    for phrase in phrases:
+        if phrase.endswith("*"):
+            stem = phrase[:-1]
+            if any(tok.startswith(stem) for tok in tokens):
+                return True
+        elif " " in phrase:
+            if phrase in norm_text:
+                return True
+        elif phrase in token_set:
+            return True
+    return False
 
 
 def _find_columns(text: str, columns: list[str]) -> list[str]:
@@ -94,16 +116,550 @@ def _parse_number(raw: str) -> float | None:
         return None
 
 
+def _numeric_cols(df: pd.DataFrame) -> list[str]:
+    return df.select_dtypes(include="number").columns.tolist()
+
+
+def _categorical_cols(df: pd.DataFrame, exclude: tuple[str, ...] = ()) -> list[str]:
+    numeric = set(_numeric_cols(df))
+    return [c for c in df.columns if c not in numeric and c not in exclude]
+
+
+def _categorical_like_cols(df: pd.DataFrame, exclude: tuple[str, ...] = (), max_unique: int = 20) -> list[str]:
+    """Columns usable as a grouping/categorical variable for stats tests: true non-numeric
+    columns, plus low-cardinality numeric columns (e.g. a 0/1 'Survived' flag), which are
+    routinely used as group labels even though their pandas dtype is numeric."""
+    result = []
+    for c in df.columns:
+        if c in exclude:
+            continue
+        if not pd.api.types.is_numeric_dtype(df[c]) or df[c].nunique(dropna=True) <= max_unique:
+            result.append(c)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Intent handlers. Each takes the raw question + dataframe and returns a
 # QAResult if it can confidently answer it, or None to let the next intent
 # in the dispatch order try. All are pure/read-only over `df`.
 # ---------------------------------------------------------------------------
 
+_ML_TRIGGERS = (
+    "build a model", "train a model", "build a classifier", "train a classifier",
+    "baseline model", "random forest", "regression model", "machine learning model",
+    "build a random forest", "how well can we predict", "feature importance",
+    "which features predict", "what predicts", "important features", "predict*",
+)
+
+
+def _intent_ml_baseline(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(norm, _ML_TRIGGERS):
+        return None
+    columns = _find_columns(question, list(df.columns))
+    if not columns:
+        return None
+    target = columns[0]
+
+    work = df.dropna(subset=[target]).copy()
+    if len(work) < 20:
+        return None
+
+    is_classification = not pd.api.types.is_numeric_dtype(work[target]) or work[target].nunique(
+        dropna=True
+    ) <= max(10, int(len(work) * 0.05))
+
+    feature_cols = [c for c in work.columns if c != target]
+    numeric_features = [c for c in feature_cols if pd.api.types.is_numeric_dtype(work[c])]
+    categorical_features = [
+        c for c in feature_cols if not pd.api.types.is_numeric_dtype(work[c]) and work[c].nunique(dropna=True) <= 15
+    ]
+    if not numeric_features and not categorical_features:
+        return None
+
+    x_parts = []
+    if numeric_features:
+        x_parts.append(work[numeric_features].apply(lambda s: s.fillna(s.median())))
+    if categorical_features:
+        x_parts.append(pd.get_dummies(work[categorical_features].astype(str)))
+    if not x_parts:
+        return None
+    x = pd.concat(x_parts, axis=1)
+    y = work[target]
+    if len(x) < 20 or x.shape[1] == 0:
+        return None
+
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+    from sklearn.metrics import accuracy_score, r2_score
+    from sklearn.model_selection import train_test_split
+
+    if is_classification:
+        y = y.astype(str)
+        value_counts = y.value_counts()
+        if value_counts.shape[0] < 2 or value_counts.min() < 2:
+            return None
+        try:
+            x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.25, random_state=42, stratify=y)
+        except ValueError:
+            x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.25, random_state=42)
+        model = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1, max_depth=12)
+        model.fit(x_train, y_train)
+        accuracy = accuracy_score(y_test, model.predict(x_test))
+        baseline = value_counts.max() / value_counts.sum()
+        metric_desc = f"accuracy = {accuracy:.3f} (a naive majority-class guess would get {baseline:.3f})"
+        task = "classification"
+    else:
+        x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.25, random_state=42)
+        model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1, max_depth=12)
+        model.fit(x_train, y_train)
+        r2 = r2_score(y_test, model.predict(x_test))
+        metric_desc = f"R² = {r2:.3f}"
+        task = "regression"
+
+    importances = pd.Series(model.feature_importances_, index=x.columns).sort_values(ascending=False)
+    top_features = importances.head(5)
+    features_desc = "; ".join(f"{name} ({value:.3f})" for name, value in top_features.items())
+    model_cls = "RandomForestClassifier" if is_classification else "RandomForestRegressor"
+
+    return QAResult(
+        answer=(
+            f"Trained a baseline Random Forest {task} model predicting '{target}' from {x.shape[1]} feature(s) "
+            f"({len(work):,} rows, 75/25 train/test split): {metric_desc}. "
+            f"Top predictive features: {features_desc}."
+        ),
+        computed=True,
+        method="ml_baseline",
+        code=(
+            f"from sklearn.ensemble import {model_cls}\n"
+            f"from sklearn.model_selection import train_test_split\n"
+            f"# X = numeric + one-hot encoded feature columns, y = df['{target}']\n"
+            f"X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)\n"
+            f"model = {model_cls}(n_estimators=100, random_state=42).fit(X_train, y_train)"
+        ),
+        value={"task": task, "metric": metric_desc, "top_features": {str(k): float(v) for k, v in top_features.items()}},
+        columns_used=[target, *numeric_features, *categorical_features],
+    )
+
+
+def _intent_normality(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(norm, ("normally distributed", "normal distribution", "is normal", "shapiro", "follows a normal")):
+        return None
+    columns = _find_columns(question, _numeric_cols(df))
+    if not columns:
+        return None
+    col = columns[0]
+    series = df[col].dropna()
+    if len(series) < 8:
+        return None
+    from scipy import stats
+
+    sample = series if len(series) <= 5000 else series.sample(5000, random_state=42)
+    statistic, p_value = stats.shapiro(sample)
+    verdict = "does not appear to be normally distributed" if p_value < 0.05 else "is consistent with a normal distribution"
+    note = " (tested on a random 5,000-row subsample)" if len(series) > 5000 else ""
+    return QAResult(
+        answer=(
+            f"Shapiro-Wilk test on '{col}'{note}: W = {statistic:.4f}, p = {p_value:.4g}. "
+            f"At the 0.05 significance level, this variable {verdict}."
+        ),
+        computed=True,
+        method="normality_test",
+        code=f"from scipy import stats\nstats.shapiro(df['{col}'].dropna())",
+        value={"statistic": float(statistic), "p_value": float(p_value), "is_normal": bool(p_value >= 0.05)},
+        columns_used=[col],
+    )
+
+
+def _intent_distribution_type(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(norm, ("what distribution", "which distribution", "distribution does", "type of distribution")):
+        return None
+    columns = _find_columns(question, _numeric_cols(df))
+    if not columns:
+        return None
+    col = columns[0]
+    series = df[col].dropna()
+    if len(series) < 8:
+        return None
+    from scipy import stats
+
+    sample = series if len(series) <= 5000 else series.sample(5000, random_state=42)
+    skew_val = float(series.skew())
+    kurt_val = float(series.kurtosis())
+
+    # Distribution objects' .cdf is passed directly rather than a name+args tuple: scipy's
+    # string-dispatch path for kstest has a compatibility bug on some builds (TypeError from
+    # ndtr internals) that the direct-callable form avoids.
+    candidates: dict[str, float] = {}
+    mu, sigma = sample.mean(), sample.std()
+    if sigma > 0:
+        candidates["normal"] = float(stats.kstest(sample, stats.norm(loc=mu, scale=sigma).cdf).statistic)
+    if (sample >= 0).all() and sample.mean() > 0:
+        candidates["exponential"] = float(
+            stats.kstest(sample, stats.expon(loc=sample.min(), scale=sample.mean()).cdf).statistic
+        )
+    lo, hi = sample.min(), sample.max()
+    if hi > lo:
+        candidates["uniform"] = float(stats.kstest(sample, stats.uniform(loc=lo, scale=hi - lo).cdf).statistic)
+    if (sample > 0).all():
+        log_sample = np.log(sample)
+        if log_sample.std() > 0:
+            candidates["log-normal"] = float(
+                stats.kstest(sample, stats.lognorm(s=log_sample.std(), scale=np.exp(log_sample.mean())).cdf).statistic
+            )
+    if not candidates:
+        return None
+
+    best = min(candidates, key=lambda k: candidates[k])
+    shape_desc = "right-skewed" if skew_val > 0.5 else ("left-skewed" if skew_val < -0.5 else "roughly symmetric")
+    tail_desc = "heavier-tailed than normal" if kurt_val > 1 else ("lighter-tailed than normal" if kurt_val < -1 else "normal-tailed")
+    return QAResult(
+        answer=(
+            f"'{col}' looks closest to a **{best}** distribution (lowest KS statistic among normal/exponential/uniform/"
+            f"log-normal fits, tested on {'a subsample of ' if len(series) > 5000 else ''}{len(sample):,} rows). "
+            f"It is {shape_desc} (skew = {skew_val:.2f}) and {tail_desc} (excess kurtosis = {kurt_val:.2f})."
+        ),
+        computed=True,
+        method="distribution_fit",
+        code=(
+            f"from scipy import stats\n"
+            f"sample = df['{col}'].dropna()\n"
+            "# KS statistic computed against normal/exponential/uniform/log-normal fits; lowest wins"
+        ),
+        value={"best_fit": best, "skew": skew_val, "kurtosis": kurt_val, "ks_statistics": candidates},
+        columns_used=[col],
+    )
+
+
+def _intent_kurtosis(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(norm, ("kurtosis",)):
+        return None
+    columns = _find_columns(question, _numeric_cols(df))
+    if not columns:
+        return None
+    col = columns[0]
+    series = df[col].dropna()
+    if len(series) < 4:
+        return None
+    kurt = series.kurtosis()
+    if pd.isna(kurt):
+        return None
+    kurt = float(kurt)
+    if kurt > 0.5:
+        desc = "leptokurtic (heavier tails / more outlier-prone than a normal distribution)"
+    elif kurt < -0.5:
+        desc = "platykurtic (lighter tails / flatter than a normal distribution)"
+    else:
+        desc = "close to mesokurtic (similar tail weight to a normal distribution)"
+    return QAResult(
+        answer=f"'{col}' has an excess kurtosis of {kurt:.2f}, which is {desc}.",
+        computed=True,
+        method="kurtosis",
+        code=f"df['{col}'].kurtosis()",
+        value=kurt,
+        columns_used=[col],
+    )
+
+
+def _intent_group_comparison_test(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(
+        norm,
+        (
+            "significant difference", "significantly different", "statistically significant",
+            "t test", "ttest", "anova", "hypothesis test", "p value", "pvalue",
+        ),
+    ):
+        return None
+    numeric_cols = _numeric_cols(df)
+    metric_matches = _find_columns(question, numeric_cols)
+    if not metric_matches:
+        return None
+    # A low-cardinality numeric column mentioned alongside a continuous one (e.g. a 0/1
+    # 'Survived' flag next to 'Fare') is almost always the grouping variable, not the metric
+    # being compared - prefer the higher-cardinality match as the outcome.
+    metric = next((c for c in metric_matches if df[c].nunique(dropna=True) > 10), metric_matches[0])
+
+    categorical_cols = _categorical_like_cols(df, exclude=(metric,))
+    group_matches = _find_columns(question, categorical_cols)
+    group_col = group_matches[0] if group_matches else None
+    if group_col is None:
+        for c in categorical_cols:
+            n_unique = df[c].nunique(dropna=True)
+            if 2 <= n_unique <= 10:
+                group_col = c
+                break
+    if group_col is None:
+        return None
+
+    work = df[[group_col, metric]].dropna()
+    grouped = [g[metric].to_numpy() for _, g in work.groupby(group_col) if len(g) >= 2]
+    group_labels = [name for name, g in work.groupby(group_col) if len(g) >= 2]
+    if len(grouped) < 2:
+        return None
+
+    from scipy import stats
+
+    if len(grouped) == 2:
+        statistic, p_value = stats.ttest_ind(grouped[0], grouped[1], equal_var=False)
+        test_name = "Welch's t-test"
+        code = (
+            f"from scipy import stats\n"
+            f"groups = [g['{metric}'].values for _, g in df.groupby('{group_col}')]\n"
+            "stats.ttest_ind(groups[0], groups[1], equal_var=False)"
+        )
+    else:
+        statistic, p_value = stats.f_oneway(*grouped)
+        test_name = "one-way ANOVA"
+        code = (
+            f"from scipy import stats\n"
+            f"groups = [g['{metric}'].values for _, g in df.groupby('{group_col}')]\n"
+            "stats.f_oneway(*groups)"
+        )
+    verdict = "a statistically significant difference" if p_value < 0.05 else "no statistically significant difference"
+    means = work.groupby(group_col)[metric].mean()
+    means_desc = "; ".join(f"{k}: {_fmt_num(v)}" for k, v in means.items())
+    return QAResult(
+        answer=(
+            f"{test_name} on '{metric}' across '{group_col}' groups ({', '.join(str(l) for l in group_labels)}): "
+            f"statistic = {statistic:.4f}, p = {p_value:.4g}. This indicates {verdict} at the 0.05 level. "
+            f"Group means — {means_desc}."
+        ),
+        computed=True,
+        method="group_comparison_test",
+        code=code,
+        value={
+            "test": test_name,
+            "statistic": float(statistic),
+            "p_value": float(p_value),
+            "group_means": {str(k): float(v) for k, v in means.items()},
+        },
+        columns_used=[metric, group_col],
+    )
+
+
+def _intent_chi_square(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(norm, ("chi square", "chi2", "association between", "independent of", "associated with")):
+        return None
+    categorical_cols = _categorical_like_cols(df)
+    matched = _find_columns(question, categorical_cols)
+    if len(matched) < 2:
+        return None
+    col_a, col_b = matched[0], matched[1]
+    contingency = pd.crosstab(df[col_a], df[col_b])
+    if contingency.shape[0] < 2 or contingency.shape[1] < 2:
+        return None
+    from scipy import stats
+
+    chi2, p_value, dof, _ = stats.chi2_contingency(contingency)
+    verdict = "a statistically significant association" if p_value < 0.05 else "no statistically significant association"
+    return QAResult(
+        answer=(
+            f"Chi-square test of independence between '{col_a}' and '{col_b}': "
+            f"chi2 = {chi2:.3f}, df = {dof}, p = {p_value:.4g}. This indicates {verdict} at the 0.05 level."
+        ),
+        computed=True,
+        method="chi_square_test",
+        code=f"from scipy import stats\nstats.chi2_contingency(pd.crosstab(df['{col_a}'], df['{col_b}']))",
+        value={"chi2": float(chi2), "p_value": float(p_value), "dof": int(dof)},
+        columns_used=[col_a, col_b],
+    )
+
+
+def _intent_covariance(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(norm, ("covariance", "co variance")):
+        return None
+    numeric_cols = _numeric_cols(df)
+    matched = _find_columns(question, numeric_cols)
+    if len(matched) < 2:
+        return None
+    col_a, col_b = matched[0], matched[1]
+    cov = df[[col_a, col_b]].cov().iloc[0, 1]
+    if pd.isna(cov):
+        return None
+    return QAResult(
+        answer=f"The covariance between '{col_a}' and '{col_b}' is {_fmt_num(cov)}.",
+        computed=True,
+        method="covariance",
+        code=f"df['{col_a}'].cov(df['{col_b}'])",
+        value=float(cov),
+        columns_used=[col_a, col_b],
+    )
+
+
+def _intent_outliers(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(norm, ("outlier", "outliers")):
+        return None
+    columns = _find_columns(question, _numeric_cols(df))
+    if not columns:
+        return None
+    col = columns[0]
+    series = df[col].dropna()
+    if series.empty:
+        return None
+    q1, q3 = series.quantile([0.25, 0.75])
+    iqr = q3 - q1
+    lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+    mask = (series < lower) | (series > upper)
+    count = int(mask.sum())
+    total = len(series)
+    pct = count / total * 100 if total else 0.0
+    return QAResult(
+        answer=(
+            f"'{col}' has {count:,} outliers ({_fmt_pct(pct)} of {total:,} values) using the IQR rule "
+            f"(outside [{_fmt_num(lower)}, {_fmt_num(upper)}])."
+        ),
+        computed=True,
+        method="outliers",
+        code=f"q1, q3 = df['{col}'].quantile([0.25, 0.75]); iqr = q3 - q1\n((df['{col}'] < q1 - 1.5*iqr) | (df['{col}'] > q3 + 1.5*iqr)).sum()",
+        value={"count": count, "percentage": round(pct, 2), "lower_bound": float(lower), "upper_bound": float(upper)},
+        columns_used=[col],
+    )
+
+
+_PERCENTILE_RE = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*(?:th|st|nd|rd)?\s*percentile")
+_QUARTILE_PHRASES: tuple[tuple[str, float], ...] = (
+    ("first quartile", 0.25), ("q1", 0.25),
+    ("third quartile", 0.75), ("q3", 0.75),
+    ("second quartile", 0.5), ("q2", 0.5),
+)
+
+
+def _intent_percentile(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    quantile: float | None = None
+    m = _PERCENTILE_RE.search(norm)
+    if m:
+        pct = _parse_number(m.group(1))
+        if pct is not None and 0 <= pct <= 100:
+            quantile = pct / 100
+    else:
+        for phrase, q in _QUARTILE_PHRASES:
+            if _has_any(norm, (phrase,)):
+                quantile = q
+                break
+
+    if quantile is None:
+        if not _has_any(norm, ("quartile", "quartiles")):
+            return None
+        columns = _find_columns(question, _numeric_cols(df))
+        if not columns:
+            return None
+        col = columns[0]
+        series = df[col].dropna()
+        if series.empty:
+            return None
+        q1, q2, q3 = series.quantile([0.25, 0.5, 0.75])
+        return QAResult(
+            answer=f"'{col}' quartiles: Q1 = {_fmt_num(q1)}, Q2 (median) = {_fmt_num(q2)}, Q3 = {_fmt_num(q3)}.",
+            computed=True,
+            method="percentile",
+            code=f"df['{col}'].quantile([0.25, 0.5, 0.75])",
+            value={"q1": float(q1), "q2": float(q2), "q3": float(q3)},
+            columns_used=[col],
+        )
+
+    columns = _find_columns(question, _numeric_cols(df))
+    if not columns:
+        return None
+    col = columns[0]
+    series = df[col].dropna()
+    if series.empty:
+        return None
+    value = series.quantile(quantile)
+    return QAResult(
+        answer=f"The {quantile * 100:g}th percentile of '{col}' is {_fmt_num(value)}.",
+        computed=True,
+        method="percentile",
+        code=f"df['{col}'].quantile({quantile})",
+        value=float(value),
+        columns_used=[col],
+    )
+
+
+def _intent_iqr(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(norm, ("iqr", "interquartile range")):
+        return None
+    columns = _find_columns(question, _numeric_cols(df))
+    if not columns:
+        return None
+    col = columns[0]
+    series = df[col].dropna()
+    if series.empty:
+        return None
+    q1, q3 = series.quantile([0.25, 0.75])
+    iqr = q3 - q1
+    return QAResult(
+        answer=f"The interquartile range of '{col}' is {_fmt_num(iqr)} (Q1 = {_fmt_num(q1)}, Q3 = {_fmt_num(q3)}).",
+        computed=True,
+        method="iqr",
+        code=f"df['{col}'].quantile(0.75) - df['{col}'].quantile(0.25)",
+        value={"q1": float(q1), "q3": float(q3), "iqr": float(iqr)},
+        columns_used=[col],
+    )
+
+
+def _intent_range(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(norm, ("range",)):
+        return None
+    columns = _find_columns(question, _numeric_cols(df))
+    if not columns:
+        return None
+    col = columns[0]
+    series = df[col].dropna()
+    if series.empty:
+        return None
+    lo, hi = float(series.min()), float(series.max())
+    return QAResult(
+        answer=f"'{col}' ranges from {_fmt_num(lo)} to {_fmt_num(hi)} (range = {_fmt_num(hi - lo)}).",
+        computed=True,
+        method="range",
+        code=f"df['{col}'].max() - df['{col}'].min()",
+        value={"min": lo, "max": hi, "range": hi - lo},
+        columns_used=[col],
+    )
+
+
+def _intent_mode(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    wants_low = _has_any(norm, ("least common", "least frequent", "least frequently", "rarest"))
+    wants_high = _has_any(
+        norm, ("most common", "most frequent", "most frequently", "mode of", "modal value", "typical value", "appears most")
+    )
+    if not (wants_low or wants_high):
+        return None
+    columns = _find_columns(question, list(df.columns))
+    if not columns:
+        return None
+    col = columns[0]
+    counts = df[col].value_counts(dropna=True)
+    if counts.empty:
+        return None
+    if wants_low:
+        value, n, label = counts.idxmin(), int(counts.min()), "least common"
+    else:
+        value, n, label = counts.idxmax(), int(counts.max()), "most common"
+    pct = n / len(df) * 100 if len(df) else 0.0
+    return QAResult(
+        answer=f"The {label} value of '{col}' is '{value}', appearing {n:,} times ({_fmt_pct(pct)}).",
+        computed=True,
+        method="mode",
+        code=f"df['{col}'].value_counts().{'idxmin' if wants_low else 'idxmax'}()",
+        value={"value": str(value), "count": n},
+        columns_used=[col],
+    )
+
 
 def _intent_missing(question: str, df: pd.DataFrame) -> QAResult | None:
     norm = _normalize(question)
-    if not any(k in norm for k in ("missing", "null value", "nan values", "nulls")):
+    if not _has_any(norm, ("missing", "null value", "null values", "nan values", "nulls")):
         return None
     columns = _find_columns(question, list(df.columns))
     if columns:
@@ -141,9 +697,8 @@ def _intent_missing(question: str, df: pd.DataFrame) -> QAResult | None:
 
 def _intent_unique(question: str, df: pd.DataFrame) -> QAResult | None:
     norm = _normalize(question)
-    if not any(
-        k in norm
-        for k in ("unique", "distinct", "how many different", "how many kinds", "how many categories", "how many types")
+    if not _has_any(
+        norm, ("unique", "distinct", "how many different", "how many kinds", "how many categories", "how many types")
     ):
         return None
     columns = _find_columns(question, list(df.columns))
@@ -166,9 +721,9 @@ def _intent_unique(question: str, df: pd.DataFrame) -> QAResult | None:
 
 def _intent_skew(question: str, df: pd.DataFrame) -> QAResult | None:
     norm = _normalize(question)
-    if "skew" not in norm:
+    if not _has_any(norm, ("skew", "skewed", "skewness")):
         return None
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    numeric_cols = _numeric_cols(df)
     if not numeric_cols:
         return None
     matched = _find_columns(question, numeric_cols)
@@ -210,9 +765,9 @@ def _intent_skew(question: str, df: pd.DataFrame) -> QAResult | None:
 
 def _intent_correlation(question: str, df: pd.DataFrame) -> QAResult | None:
     norm = _normalize(question)
-    if not any(k in norm for k in ("correlat", "relationship", "related to", "relate to")):
+    if not _has_any(norm, ("correlat*", "relationship", "related to", "relate to")):
         return None
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    numeric_cols = _numeric_cols(df)
     if len(numeric_cols) < 2:
         return None
     matched = _find_columns(question, numeric_cols)
@@ -256,22 +811,55 @@ _COMPARATORS: list[tuple[str, str]] = [
     (r"(?:at most|no more than)", "<="),
     (r">=", ">="),
     (r"<=", "<="),
+    (r"(?:not equal to|different from|differs from|!=)", "!="),
     (r"(?:over|above|more than|greater than|exceed(?:ing|s)?)", ">"),
     (r"(?:under|below|less than|fewer than)", "<"),
     (r">", ">"),
     (r"<", "<"),
-    (r"(?:equal(?:s|to)?)", "=="),
+    (r"(?:equal(?:s|to)?|exactly)", "=="),
 ]
 
 _NUMBER_PATTERN = r"(-?\d[\d,]*\.?\d*)"
+_BETWEEN_RE = re.compile(r"between\s+" + _NUMBER_PATTERN + r"\s+and\s+" + _NUMBER_PATTERN)
 
 
 def _intent_condition(question: str, df: pd.DataFrame) -> QAResult | None:
-    norm = question.lower()
+    lower = question.lower()
+    numeric_cols = _numeric_cols(df)
+    columns = _find_columns(question, numeric_cols)
+
+    between_match = _BETWEEN_RE.search(lower)
+    if between_match and columns:
+        lo = _parse_number(between_match.group(1))
+        hi = _parse_number(between_match.group(2))
+        if lo is not None and hi is not None:
+            if lo > hi:
+                lo, hi = hi, lo
+            col = columns[0]
+            series = df[col].dropna()
+            if not series.empty:
+                mask = (series >= lo) & (series <= hi)
+                count = int(mask.sum())
+                total = len(series)
+                pct = count / total * 100 if total else 0.0
+                wants_pct = _has_any(_normalize(question), ("percent*", "proportion", "fraction"))
+                if wants_pct:
+                    answer = f"{_fmt_pct(pct)} of rows have '{col}' between {_fmt_num(lo)} and {_fmt_num(hi)} ({count:,} of {total:,})."
+                else:
+                    answer = f"{count:,} rows have '{col}' between {_fmt_num(lo)} and {_fmt_num(hi)} ({_fmt_pct(pct)} of {total:,})."
+                return QAResult(
+                    answer=answer,
+                    computed=True,
+                    method="condition_filter",
+                    code=f"df['{col}'].between({lo}, {hi}).sum()",
+                    value={"column": col, "low": lo, "high": hi, "count": count, "percentage": round(pct, 2)},
+                    columns_used=[col],
+                )
+
     comparator_symbol = None
     match = None
     for pattern, symbol in _COMPARATORS:
-        m = re.search(pattern + r"\s*" + _NUMBER_PATTERN, norm)
+        m = re.search(pattern + r"\s*" + _NUMBER_PATTERN, lower)
         if m:
             comparator_symbol = symbol
             match = m
@@ -279,11 +867,7 @@ def _intent_condition(question: str, df: pd.DataFrame) -> QAResult | None:
     if match is None:
         return None
     threshold = _parse_number(match.group(1))
-    if threshold is None:
-        return None
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    columns = _find_columns(question, numeric_cols)
-    if not columns:
+    if threshold is None or not columns:
         return None
     col = columns[0]
     series = df[col].dropna()
@@ -297,12 +881,14 @@ def _intent_condition(question: str, df: pd.DataFrame) -> QAResult | None:
         mask = series < threshold
     elif comparator_symbol == "<=":
         mask = series <= threshold
+    elif comparator_symbol == "!=":
+        mask = series != threshold
     else:
         mask = series == threshold
     count = int(mask.sum())
     total = len(series)
     pct = (count / total * 100) if total else 0.0
-    wants_pct = any(k in norm for k in ("percent", "%", "proportion", "fraction", "share of"))
+    wants_pct = _has_any(_normalize(question), ("percent*", "proportion", "fraction", "share of"))
     if wants_pct:
         answer = f"{_fmt_pct(pct)} of rows have '{col}' {comparator_symbol} {_fmt_num(threshold)} ({count:,} of {total:,})."
     else:
@@ -317,20 +903,20 @@ def _intent_condition(question: str, df: pd.DataFrame) -> QAResult | None:
     )
 
 
-_SUPERLATIVE_HIGH = ("highest", "largest", "most", "top", "greatest", "maximum", "biggest")
-_SUPERLATIVE_LOW = ("lowest", "smallest", "least", "bottom", "minimum")
+_SUPERLATIVE_HIGH = ("highest", "largest", "most", "top", "greatest", "biggest")
+_SUPERLATIVE_LOW = ("lowest", "smallest", "least", "bottom", "fewest")
 
 
 def _intent_topn(question: str, df: pd.DataFrame) -> QAResult | None:
     norm = _normalize(question)
     ascending: bool | None = None
-    if any(k in norm for k in _SUPERLATIVE_LOW):
+    if _has_any(norm, _SUPERLATIVE_LOW):
         ascending = True
-    if any(k in norm for k in _SUPERLATIVE_HIGH):
+    if _has_any(norm, _SUPERLATIVE_HIGH):
         ascending = False if ascending is None else ascending
     if ascending is None:
         return None
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    numeric_cols = _numeric_cols(df)
     metric_matches = _find_columns(question, numeric_cols)
     if not metric_matches:
         return None
@@ -339,7 +925,7 @@ def _intent_topn(question: str, df: pd.DataFrame) -> QAResult | None:
     n = int(n_match.group(1)) if n_match else 1
     n = max(1, min(n, 20))
 
-    categorical_cols = [c for c in df.columns if c not in numeric_cols]
+    categorical_cols = _categorical_cols(df)
     label_matches = _find_columns(question, categorical_cols)
     label_col = label_matches[0] if label_matches else None
     if label_col is None:
@@ -390,8 +976,12 @@ _AGG_KEYWORDS: dict[str, str] = {
     "minimum": "min",
     "min": "min",
     "standard deviation": "std",
+    "stdev": "std",
     "std": "std",
+    "spread": "std",
+    "dispersion": "std",
     "variance": "var",
+    "count": "count",
 }
 
 
@@ -399,12 +989,12 @@ def _intent_aggregation(question: str, df: pd.DataFrame) -> QAResult | None:
     norm = _normalize(question)
     func = None
     for keyword, agg in _AGG_KEYWORDS.items():
-        if keyword in norm:
+        if _has_any(norm, (keyword,)):
             func = agg
             break
     if func is None:
         return None
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    numeric_cols = _numeric_cols(df)
     metric_matches = _find_columns(question, numeric_cols)
     if not metric_matches:
         return None
@@ -436,8 +1026,9 @@ def _intent_aggregation(question: str, df: pd.DataFrame) -> QAResult | None:
     if series.empty:
         return None
     value = getattr(series, func)()
+    display_name = {"std": "standard deviation", "var": "variance"}.get(func, func)
     return QAResult(
-        answer=f"The {func} of '{metric}' is {_fmt_num(float(value))}.",
+        answer=f"The {display_name} of '{metric}' is {_fmt_num(float(value))}.",
         computed=True,
         method="aggregation",
         code=f"df['{metric}'].{func}()",
@@ -448,13 +1039,13 @@ def _intent_aggregation(question: str, df: pd.DataFrame) -> QAResult | None:
 
 def _intent_shape(question: str, df: pd.DataFrame) -> QAResult | None:
     norm = _normalize(question)
-    wants_rows = any(
-        k in norm for k in ("how many rows", "how many observations", "how many records", "how many entries", "number of rows")
-    )
-    wants_cols = any(
-        k in norm for k in ("how many columns", "how many variables", "how many fields", "number of columns")
-    )
-    wants_shape = any(k in norm for k in ("shape of the data", "size of the dataset", "dimensions of"))
+    tokens = set(norm.split())
+    context = _has_any(norm, ("how many", "number of", "shape of", "size of the dataset", "dimensions of"))
+    if not context:
+        return None
+    wants_rows = bool(tokens & {"row", "rows", "observation", "observations", "record", "records", "entry", "entries"})
+    wants_cols = bool(tokens & {"column", "columns", "variable", "variables", "field", "fields"})
+    wants_shape = _has_any(norm, ("shape of the data", "size of the dataset", "dimensions of")) and not (wants_rows or wants_cols)
     if not (wants_rows or wants_cols or wants_shape):
         return None
     rows, cols = df.shape
@@ -476,7 +1067,7 @@ _YEAR_PATTERN = re.compile(r"\b(?:19|20)\d{2}\b")
 
 def _intent_time_change(question: str, df: pd.DataFrame) -> QAResult | None:
     norm = _normalize(question)
-    if not any(k in norm for k in ("increase", "decrease", "change", "grew", "declined", "growth", "drop", "fell", "rose")):
+    if not _has_any(norm, ("increase", "decrease", "change", "grew", "declined", "growth", "drop", "fell", "rose")):
         return None
     years = sorted({int(y) for y in _YEAR_PATTERN.findall(question)})
     if len(years) < 2:
@@ -497,13 +1088,13 @@ def _intent_time_change(question: str, df: pd.DataFrame) -> QAResult | None:
     if time_col is None:
         return None
 
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    numeric_cols = _numeric_cols(df)
     metric_matches = [c for c in _find_columns(question, numeric_cols) if c != time_col]
     if not metric_matches:
         return None
     metric = metric_matches[0]
 
-    categorical_cols = [c for c in df.columns if c not in numeric_cols and c != time_col]
+    categorical_cols = [c for c in _categorical_cols(df) if c != time_col]
     label_matches = _find_columns(question, categorical_cols)
     label_col = label_matches[0] if label_matches else (categorical_cols[0] if categorical_cols else None)
     if label_col is None:
@@ -529,7 +1120,7 @@ def _intent_time_change(question: str, df: pd.DataFrame) -> QAResult | None:
         return None
 
     diff = (pivot[year_b] - pivot[year_a]).sort_values()
-    wants_decrease = any(k in norm for k in ("decrease", "declined", "drop", "fell"))
+    wants_decrease = _has_any(norm, ("decrease", "declined", "drop", "fell"))
     ordered = diff if wants_decrease else diff.sort_values(ascending=False)
     top = ordered.head(5)
     direction = "decrease" if wants_decrease else "increase"
@@ -545,6 +1136,18 @@ def _intent_time_change(question: str, df: pd.DataFrame) -> QAResult | None:
 
 
 _INTENTS: list[Callable[[str, pd.DataFrame], QAResult | None]] = [
+    _intent_ml_baseline,
+    _intent_normality,
+    _intent_distribution_type,
+    _intent_kurtosis,
+    _intent_group_comparison_test,
+    _intent_chi_square,
+    _intent_covariance,
+    _intent_outliers,
+    _intent_percentile,
+    _intent_iqr,
+    _intent_range,
+    _intent_mode,
     _intent_missing,
     _intent_unique,
     _intent_skew,
@@ -560,9 +1163,9 @@ _INTENTS: list[Callable[[str, pd.DataFrame], QAResult | None]] = [
 def _fallback(df: pd.DataFrame, snapshot: dict[str, Any] | None) -> QAResult:
     rows, cols = df.shape
     hint = (
-        "Try asking about a specific column, e.g. 'what is the average <column>?', "
-        "'how many rows have <column> over <number>?', 'what correlates with <column>?', "
-        "or 'which <category> has the highest <column>?'."
+        "Try things like: 'average <column>?', '<column> over <number>?', 'correlation between X and Y', "
+        "'is X normally distributed?', 'significant difference in X between Y groups?', "
+        "'build a model predicting <column>', or 'outliers in <column>'."
     )
     if snapshot:
         msg = (
@@ -579,10 +1182,13 @@ def _fallback(df: pd.DataFrame, snapshot: dict[str, Any] | None) -> QAResult:
 def answer_question(question: str, df: pd.DataFrame, snapshot: dict[str, Any] | None = None) -> QAResult:
     """Answer a natural-language question with a real computation over `df` when possible.
 
-    Tries a fixed set of deterministic intent handlers (correlation, thresholds, aggregation,
-    ranking, missing data, etc.) in order of specificity; each performs an actual pandas
-    computation rather than returning generic advice. Falls back to a grounded snapshot summary,
-    clearly marked as not computed, when no intent matches.
+    Tries a fixed set of deterministic intent handlers, ordered from most to least specific:
+    ML baselines, distribution/normality checks, statistical hypothesis tests (t-test/ANOVA/
+    chi-square), descriptive statistics (percentile/IQR/range/mode/outliers/covariance/kurtosis),
+    then the original core set (missing values, uniqueness, skew, correlation, time-based change,
+    threshold filters, ranking, aggregation, shape). Each performs an actual computation rather
+    than returning generic advice; falls back to a grounded snapshot summary, clearly marked as
+    not computed, only when nothing matches.
     """
     for intent in _INTENTS:
         try:

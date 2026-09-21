@@ -24,7 +24,7 @@
         color: var(--text);
       }
       .app {
-        max-width: 1400px;
+        max-width: 1680px;
         margin: 0 auto;
         padding: 24px;
       }
@@ -60,8 +60,9 @@
       }
       .grid {
         display: grid;
-        grid-template-columns: 1.1fr 2.2fr;
+        grid-template-columns: 0.85fr 2.55fr;
         gap: 20px;
+        align-items: start;
       }
       .panel {
         background: rgba(15, 23, 42, 0.82);
@@ -72,6 +73,12 @@
       }
       .panel h2, .panel h3 {
         margin-top: 0;
+      }
+      aside.panel {
+        position: sticky;
+        top: 20px;
+        max-height: calc(100vh - 40px);
+        overflow-y: auto;
       }
       .search-box {
         display: flex;
@@ -86,9 +93,29 @@
         background: #0b1220;
         color: var(--text);
       }
+      .divider {
+        text-align: center;
+        color: var(--muted);
+        font-size: 0.78rem;
+        margin: 16px 0 4px;
+      }
+      .hint {
+        font-size: 0.82rem;
+        color: var(--muted);
+        margin: 4px 0 10px;
+        line-height: 1.4;
+      }
       .results {
         display: grid;
         gap: 12px;
+        max-height: 55vh;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+      .results-count {
+        font-size: 0.78rem;
+        color: var(--muted);
+        margin: -6px 0 10px;
       }
       .result-item {
         background: rgba(30, 41, 59, 0.8);
@@ -164,7 +191,7 @@
       }
       .chart-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
         gap: 14px;
         margin-top: 16px;
       }
@@ -176,6 +203,26 @@
         background: rgba(15, 23, 42, 0.55);
       }
       .chart-card h4 { margin: 0 0 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .chart-card .editor.chart-basic {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .chart-advanced {
+        margin-top: 8px;
+      }
+      .chart-advanced summary {
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 0.82rem;
+        user-select: none;
+        list-style: none;
+      }
+      .chart-advanced summary::-webkit-details-marker { display: none; }
+      .chart-advanced summary::before { content: '▸ '; }
+      .chart-advanced[open] summary::before { content: '▾ '; }
+      .chart-advanced[open] summary { color: var(--text); margin-bottom: 8px; }
+      .chart-advanced .editor {
+        grid-template-columns: repeat(3, 1fr);
+      }
       .chart-card .chart-title-input {
         width: 100%;
         margin-top: 10px;
@@ -186,7 +233,7 @@
         color: var(--text);
         font-size: 0.85rem;
       }
-      .chart-card .chart-area { position: relative; min-height: 320px; margin-top: 10px; }
+      .chart-card .chart-area { position: relative; min-height: 380px; margin-top: 10px; }
       /* Plotly's default modebar crowds badly at narrower widths; trim to essentials via JS
          config and give it explicit breathing room + contrast here. */
       .chart-area .modebar-container {
@@ -214,6 +261,13 @@
         .grid {
           grid-template-columns: 1fr;
         }
+        aside.panel {
+          position: static;
+          max-height: none;
+        }
+        .results {
+          max-height: none;
+        }
       }
     </style>
   </head>
@@ -234,7 +288,15 @@
             <input id="search-input" placeholder="Search Kaggle datasets..." />
             <button class="btn" id="search-btn">Search</button>
           </div>
+          <div id="results-count" class="results-count"></div>
           <div id="results" class="results"></div>
+
+          <div class="divider">— or —</div>
+          <div class="hint">Analyze a file already on your computer. Nothing is uploaded to Kaggle or saved on the server — it's parsed in memory just for this analysis.</div>
+          <div class="search-box">
+            <input type="file" id="upload-input" accept=".csv,.tsv,.json,.parquet,.xlsx,.xls" />
+            <button class="btn secondary" id="upload-btn">Upload</button>
+          </div>
         </aside>
 
         <main class="panel">
@@ -256,6 +318,13 @@
             <ul id="questions-list"></ul>
           </div>
 
+          <div class="findings">
+            <h3>Ask about this dataset</h3>
+            <p class="hint">Get a direct, computed answer from the real data instead of a generic summary — e.g. "what percentage of X are above N?", "which category has the highest Y?", or "what correlates with Z?".</p>
+            <div class="search-box"><input id="question-input" placeholder="Ask a research question..." /><button class="btn secondary" id="question-btn">Run</button></div>
+            <div id="question-answer"></div>
+          </div>
+
           <div class="recommendations" id="recommendations"></div>
 
           <div id="viz-section" hidden>
@@ -264,28 +333,28 @@
           </div>
           <template id="chart-card-template">
             <div class="chart-card">
-              <h4><span class="chart-card-label"></span></h4>
-              <div class="editor">
+              <h4><span class="chart-card-label"></span><button type="button" class="btn secondary chart-save-btn" style="padding: 4px 10px; font-size: 0.78rem;">Save finding</button></h4>
+              <div class="editor chart-basic">
                 <label>Type<select class="chart-type"></select></label>
                 <label>X field<select class="chart-x"></select></label>
                 <label>Y field<select class="chart-y"></select></label>
-                <label>Aggregate<select class="chart-agg"></select></label>
-                <label>Group by<select class="chart-group"></select></label>
-                <label>Sort<select class="chart-sort"></select></label>
               </div>
-              <input class="chart-title-input" type="text" placeholder="Custom chart title (optional)" />
+              <details class="chart-advanced">
+                <summary>More options (aggregate, group, sort, title)</summary>
+                <div class="editor">
+                  <label>Aggregate<select class="chart-agg"></select></label>
+                  <label>Group by<select class="chart-group"></select></label>
+                  <label>Sort<select class="chart-sort"></select></label>
+                </div>
+                <input class="chart-title-input" type="text" placeholder="Custom chart title (optional)" />
+              </details>
               <div class="chart-area"></div>
             </div>
           </template>
-          <div class="editor"><button class="btn secondary" id="save-finding-btn">Save finding</button><button class="btn secondary" id="export-notebook-btn">Export notebook</button></div>
+          <div class="editor"><button class="btn secondary" id="export-notebook-btn">Export notebook</button></div>
           <div class="findings" id="findings" hidden>
             <h3>Saved findings</h3>
             <ul id="findings-list"></ul>
-          </div>
-          <div class="findings">
-            <h3>Ask about this dataset</h3>
-            <div class="search-box"><input id="question-input" placeholder="Ask a research question..." /><button class="btn secondary" id="question-btn">Run</button></div>
-            <div id="question-answer"></div>
           </div>
         </main>
       </div>
@@ -302,6 +371,9 @@
 
       const searchInput = document.getElementById('search-input');
       const resultsEl = document.getElementById('results');
+      const resultsCountEl = document.getElementById('results-count');
+      const uploadInput = document.getElementById('upload-input');
+      const uploadBtn = document.getElementById('upload-btn');
       const datasetInfoEl = document.getElementById('dataset-info');
       const sampleBannerEl = document.getElementById('sample-banner');
       const fullAnalysisBtn = document.getElementById('full-analysis-btn');
@@ -342,7 +414,7 @@
         toImageButtonOptions: {format: 'png', scale: 2},
       };
       const PLOTLY_LAYOUT_BASE = {
-        margin: {t: 48, r: 16, l: 56, b: 46},
+        margin: {t: 44, r: 20, l: 56, b: 46},
         paper_bgcolor: '#0f172a',
         plot_bgcolor: '#0f172a',
         font: {color: '#e5e7eb'},
@@ -474,7 +546,13 @@
           }
         }
 
-        Plotly.react(slot.area, traces, {...PLOTLY_LAYOUT_BASE, title}, PLOTLY_CONFIG);
+        const shortTitle = title && title.length > 42 ? `${title.slice(0, 41)}…` : title;
+        Plotly.react(
+          slot.area,
+          traces,
+          {...PLOTLY_LAYOUT_BASE, title: {text: shortTitle, x: 0.02, xanchor: 'left', font: {size: 14}}},
+          PLOTLY_CONFIG
+        );
       }
 
       function createChartSlot(label, fields, recommendation) {
@@ -491,6 +569,7 @@
           sort: node.querySelector('.chart-sort'),
           titleInput: node.querySelector('.chart-title-input'),
           area: node.querySelector('.chart-area'),
+          saveBtn: node.querySelector('.chart-save-btn'),
         };
         slot.type.innerHTML = chartTypes.map(([value, text]) => `<option value="${value}">${text}</option>`).join('');
         slot.x.innerHTML = fieldOptions(fields);
@@ -508,9 +587,32 @@
 
         [slot.type, slot.x, slot.y, slot.agg, slot.group, slot.sort].forEach((control) => control.addEventListener('change', () => renderChart(slot)));
         slot.titleInput.addEventListener('input', () => renderChart(slot));
+        slot.saveBtn.addEventListener('click', () => saveChartFinding(slot, label));
         renderChart(slot);
         chartSlots.push(slot);
         return slot;
+      }
+
+      function saveChartFinding(slot, label) {
+        const chart = {
+          type: slot.type.value, x: slot.x.value, y: slot.y.value,
+          agg: slot.agg.value, group: slot.group.value, sort: slot.sort.value,
+          customTitle: slot.titleInput.value.trim(),
+        };
+        const descriptor = chart.agg !== 'none'
+          ? `${chart.agg} of ${chart.y || 'rows'} by ${chart.x}${chart.group ? ` (grouped by ${chart.group})` : ''}`
+          : `${chart.type} of ${chart.x}${chart.y ? ` vs ${chart.y}` : ''}`;
+        const title = chart.customTitle || `${label}: ${descriptor}`;
+        state.findings.push({
+          type: 'chart',
+          title,
+          summary: `${descriptor} for ${state.analysis?.dataset_name || 'the active dataset'}.`,
+          chart,
+        });
+        renderFindings();
+        const original = slot.saveBtn.textContent;
+        slot.saveBtn.textContent = 'Saved ✓';
+        setTimeout(() => { slot.saveBtn.textContent = original; }, 1200);
       }
 
       function rebuildChartSlots(fields, recommendations) {
@@ -522,17 +624,25 @@
 
       function renderFindings() {
         findingsEl.hidden = state.findings.length === 0;
-        findingsListEl.innerHTML = state.findings.map((finding) => `<li><strong>${finding.title}</strong>: ${finding.summary}</li>`).join('');
+        findingsListEl.innerHTML = state.findings.map((finding) => {
+          if (finding.type === 'question') {
+            return `<li><strong>${finding.title}</strong><div style="color: var(--muted); font-size: 0.85rem;">${finding.answer}</div></li>`;
+          }
+          return `<li><strong>${finding.title}</strong><div style="color: var(--muted); font-size: 0.85rem;">${finding.summary || ''}</div></li>`;
+        }).join('');
       }
 
       async function searchDatasets() {
         const query = searchInput.value.trim();
         if (!query) {
+          resultsCountEl.textContent = '';
           resultsEl.innerHTML = '<div class="result-item">Enter a dataset keyword to search.</div>';
           return;
         }
+        resultsCountEl.textContent = '';
+        resultsEl.innerHTML = '<div class="result-item">Searching Kaggle...</div>';
         try {
-          const response = await fetch(`${API_BASE}/datasets/search?query=${encodeURIComponent(query)}&limit=5`);
+          const response = await fetch(`${API_BASE}/datasets/search?query=${encodeURIComponent(query)}&limit=150`);
           const data = await response.json();
           const results = data.results || [];
           if (!results.length) {
@@ -540,6 +650,7 @@
             return;
           }
 
+          resultsCountEl.textContent = `${results.length.toLocaleString()} dataset${results.length === 1 ? '' : 's'} found — scroll for more`;
           resultsEl.innerHTML = results
             .map((item) => `
               <div class="result-item">
@@ -552,7 +663,39 @@
             `)
             .join('');
         } catch (error) {
+          resultsCountEl.textContent = '';
           resultsEl.innerHTML = '<div class="result-item">Search failed. Start the API server first.</div>';
+        }
+      }
+
+      async function uploadDataset() {
+        const file = uploadInput.files[0];
+        if (!file) {
+          resultsEl.innerHTML = '<div class="result-item">Choose a file first.</div>';
+          return;
+        }
+        const formData = new FormData();
+        formData.append('file', file);
+        uploadBtn.textContent = 'Analyzing...';
+        uploadBtn.disabled = true;
+        try {
+          const response = await fetch(`${API_BASE}/datasets/upload`, {method: 'POST', body: formData});
+          const json = await response.json();
+          if (!response.ok) {
+            resultsEl.innerHTML = `<div class="result-item"><strong>Upload failed</strong><div>${json.detail || 'Could not parse this file.'}</div></div>`;
+            return;
+          }
+          state.dataset = json.dataset;
+          state.analysis = json.analysis;
+          state.slug = null;
+          downloadFullBtn.hidden = true;
+          fullAnalysisBtn.hidden = true;
+          renderAnalysis();
+        } catch (error) {
+          resultsEl.innerHTML = '<div class="result-item">Upload failed. Start the API server first.</div>';
+        } finally {
+          uploadBtn.textContent = 'Upload';
+          uploadBtn.disabled = false;
         }
       }
 
@@ -651,6 +794,7 @@
       });
 
       document.getElementById('search-btn').addEventListener('click', searchDatasets);
+      uploadBtn.addEventListener('click', uploadDataset);
       fullAnalysisBtn.addEventListener('click', async () => {
         if (!state.slug) return;
         fullAnalysisBtn.textContent = 'Running full analysis...';
@@ -686,13 +830,6 @@
       searchInput.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') searchDatasets();
       });
-      document.getElementById('save-finding-btn').addEventListener('click', () => {
-        const slot = chartSlots[0];
-        if (!slot) return;
-        const title = `${slot.type.value} of ${slot.x.value}`;
-        state.findings.push({title, summary: `Saved ${title} for ${state.analysis?.dataset_name || 'the active dataset'}.`});
-        renderFindings();
-      });
       document.getElementById('export-notebook-btn').addEventListener('click', async () => {
         if (!state.analysis) return;
         const response = await fetch(`${API_BASE}/analysis/notebook`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({analysis: state.analysis, findings: state.findings})});
@@ -704,24 +841,43 @@
         link.click();
         URL.revokeObjectURL(link.href);
       });
+      let lastQuestionResult = null;
       document.getElementById('question-btn').addEventListener('click', async () => {
         if (!state.analysis || !questionInput.value.trim()) return;
         questionAnswer.innerHTML = '<p>Computing...</p>';
+        const question = questionInput.value.trim();
         const response = await fetch(`${API_BASE}/analysis/question`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({question: questionInput.value, analysis: state.analysis, dataset_id: state.dataset?.dataset_id}),
+          body: JSON.stringify({question, analysis: state.analysis, dataset_id: state.dataset?.dataset_id}),
         });
         const result = await response.json();
         if (!response.ok) {
+          lastQuestionResult = null;
           questionAnswer.innerHTML = `<p>${result.detail || 'Could not answer this question.'}</p>`;
           return;
         }
+        lastQuestionResult = {...result, question};
         const badge = result.computed
           ? `<span class="chip" style="background: rgba(52, 211, 153, 0.16); border-color: rgba(52, 211, 153, 0.4);">computed: ${result.method}</span>`
           : `<span class="chip" style="background: rgba(248, 113, 113, 0.14); border-color: rgba(248, 113, 113, 0.35);">not computed</span>`;
         const codeLine = result.code ? `<div style="margin-top: 6px; font-family: monospace; font-size: 0.8rem; color: var(--muted);">${result.code}</div>` : '';
-        questionAnswer.innerHTML = `<p><strong>Answer</strong> ${badge}</p><p>${result.answer || 'No answer available.'}</p>${codeLine}`;
+        const saveBtn = result.computed ? `<button type="button" class="btn secondary" id="save-answer-btn" style="margin-top: 8px; padding: 4px 10px; font-size: 0.78rem;">Save as finding</button>` : '';
+        questionAnswer.innerHTML = `<p><strong>Answer</strong> ${badge}</p><p>${result.answer || 'No answer available.'}</p>${codeLine}${saveBtn}`;
+        document.getElementById('save-answer-btn')?.addEventListener('click', () => {
+          if (!lastQuestionResult) return;
+          state.findings.push({
+            type: 'question',
+            title: lastQuestionResult.question,
+            question: lastQuestionResult.question,
+            answer: lastQuestionResult.answer,
+            method: lastQuestionResult.method,
+            code: lastQuestionResult.code,
+          });
+          renderFindings();
+          const btn = document.getElementById('save-answer-btn');
+          if (btn) { btn.textContent = 'Saved ✓'; btn.disabled = true; }
+        });
       });
     </script>
   </body>

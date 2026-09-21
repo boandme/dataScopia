@@ -36,7 +36,7 @@ from dataset.kaggle_search import (
     kaggle_credential_status,
     search_kaggle_datasets,
 )
-from dataset.loader import load_dataset
+from dataset.loader import load_dataset, load_dataframe_from_bytes
 from dataset.streaming import DEFAULT_SAMPLE_BYTES, load_dataset_sample
 import workspace_cache
 
@@ -83,9 +83,10 @@ def kaggle_auth_status() -> dict[str, str | bool]:
 
 
 @app.get("/datasets/search")
-def search_datasets(query: str = "", limit: int = 10) -> dict[str, object]:
+def search_datasets(query: str = "", limit: int = 60) -> dict[str, object]:
     if not query:
         return {"results": []}
+    limit = max(1, min(limit, 300))
     return {"results": search_kaggle_datasets(query, max_results=limit)}
 
 
@@ -176,20 +177,27 @@ def download_full_dataset(payload: dict[str, str], background_tasks: BackgroundT
 
 @app.post("/datasets/upload")
 async def upload_dataset(file: UploadFile = File(...)) -> dict[str, object]:
+    """Analyze a file the user picks from their own computer. Parsed entirely in memory — never
+    written to the server's disk — since the whole point of an upload is a file the user already
+    has locally; the server shouldn't need its own copy to profile it."""
+    filename = file.filename or "uploaded_dataset.csv"
     try:
         contents = await file.read()
-        temp_dir = Path("/tmp") / "kaggle_dataset_analysis"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        temp_path = temp_dir / file.filename
-        temp_path.write_bytes(contents)
-
-        dataset = load_dataset(temp_path)
-        df = dataset["dataframe"]
+        df = load_dataframe_from_bytes(filename, contents)
+        name = Path(filename).stem
+        suffix = Path(filename).suffix.lstrip(".").lower()
+        dataset: dict[str, object] = {
+            "name": name,
+            "file_type": suffix,
+            "shape": {"rows": int(df.shape[0]), "columns": int(df.shape[1])},
+            "columns": list(df.columns),
+            "dataframe": df,
+        }
         _cache_dataset(dataset, df, dataset_id=f"upload-{uuid.uuid4().hex[:10]}")
-        analysis = _analysis_with_preview(df, dataset["name"])
+        analysis = _analysis_with_preview(df, name)
         return {"dataset": _serializable_dataset(dataset), "analysis": analysis}
     except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/analysis/notebook")
