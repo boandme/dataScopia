@@ -55,6 +55,16 @@ def _has_any(norm_text: str, phrases: tuple[str, ...]) -> bool:
     return False
 
 
+def _column_match(col_tokens: list[str], text_tokens: set[str], norm_text: str) -> bool:
+    """A column matches if every one of its words appears as a whole token in the text (word-
+    boundary safe), OR - for multi-word names only - its exact phrase appears as a substring.
+    A single-token name must NEVER fall back to raw substring matching, or short names like
+    'age' would match inside unrelated words like 'percentage'."""
+    token_match = all(tok in text_tokens or _singular(tok) in text_tokens for tok in col_tokens)
+    phrase_match = len(col_tokens) > 1 and " ".join(col_tokens) in norm_text
+    return token_match or phrase_match
+
+
 def _find_columns(text: str, columns: list[str]) -> list[str]:
     """Return dataset columns mentioned in free text, most-specific match first."""
     norm_text = _normalize(text)
@@ -68,13 +78,55 @@ def _find_columns(text: str, columns: list[str]) -> list[str]:
         if not col_norm:
             continue
         col_tokens = col_norm.split()
-        token_match = all(tok in text_tokens or _singular(tok) in text_tokens for tok in col_tokens)
-        if col_norm in norm_text or token_match:
+        if _column_match(col_tokens, text_tokens, norm_text):
             scored.append((col, len(col_norm)))
     scored.sort(key=lambda item: -item[1])
     seen: set[str] = set()
     ordered: list[str] = []
     for col, _ in scored:
+        if col not in seen:
+            seen.add(col)
+            ordered.append(col)
+    return ordered
+
+
+def _find_columns_by_position(text: str, columns: list[str]) -> list[str]:
+    """Like _find_columns, but ordered by where each column is first mentioned in the text
+    rather than by name specificity. Word order carries real meaning for phrasings like
+    'correlation between X and Y' or 'ratio of X to Y', where the longer column name isn't
+    necessarily the one meant first."""
+    norm_text = _normalize(text)
+    tokens = norm_text.split()
+    text_tokens: set[str] = set()
+    for tok in tokens:
+        text_tokens.add(tok)
+        text_tokens.add(_singular(tok))
+
+    first_token_index: dict[str, int] = {}
+    for i, tok in enumerate(tokens):
+        for key in (tok, _singular(tok)):
+            if key not in first_token_index:
+                first_token_index[key] = i
+
+    positions: list[tuple[int, str]] = []
+    for col in columns:
+        col_norm = _normalize(col)
+        if not col_norm:
+            continue
+        col_tokens = col_norm.split()
+        if not _column_match(col_tokens, text_tokens, norm_text):
+            continue
+        candidate_idxs = [first_token_index[t] for t in col_tokens if t in first_token_index]
+        if not candidate_idxs:
+            candidate_idxs = [
+                first_token_index[_singular(t)] for t in col_tokens if _singular(t) in first_token_index
+            ]
+        if candidate_idxs:
+            positions.append((min(candidate_idxs), col))
+    positions.sort(key=lambda item: item[0])
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for _, col in positions:
         if col not in seen:
             seen.add(col)
             ordered.append(col)
@@ -445,7 +497,7 @@ def _intent_chi_square(question: str, df: pd.DataFrame) -> QAResult | None:
     if not _has_any(norm, ("chi square", "chi2", "association between", "independent of", "associated with")):
         return None
     categorical_cols = _categorical_like_cols(df)
-    matched = _find_columns(question, categorical_cols)
+    matched = _find_columns_by_position(question, categorical_cols)
     if len(matched) < 2:
         return None
     col_a, col_b = matched[0], matched[1]
@@ -474,7 +526,7 @@ def _intent_covariance(question: str, df: pd.DataFrame) -> QAResult | None:
     if not _has_any(norm, ("covariance", "co variance")):
         return None
     numeric_cols = _numeric_cols(df)
-    matched = _find_columns(question, numeric_cols)
+    matched = _find_columns_by_position(question, numeric_cols)
     if len(matched) < 2:
         return None
     col_a, col_b = matched[0], matched[1]
@@ -657,6 +709,244 @@ def _intent_mode(question: str, df: pd.DataFrame) -> QAResult | None:
     )
 
 
+def _intent_duplicates(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(norm, ("duplicate*", "repeated rows")):
+        return None
+    dup_count = int(df.duplicated().sum())
+    total = len(df)
+    pct = dup_count / total * 100 if total else 0.0
+    return QAResult(
+        answer=f"There are {dup_count:,} fully duplicated rows ({_fmt_pct(pct)} of {total:,}).",
+        computed=True,
+        method="duplicates",
+        code="df.duplicated().sum()",
+        value={"count": dup_count, "percentage": round(pct, 2)},
+    )
+
+
+def _intent_overview(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(
+        norm,
+        (
+            "describe this dataset", "describe the dataset", "summarize this dataset",
+            "summarize the dataset", "give me an overview", "overview of this dataset",
+            "overview of the dataset", "tell me about this dataset", "summary of this dataset",
+            "what is this dataset about",
+        ),
+    ):
+        return None
+    rows, cols = df.shape
+    numeric_cols = _numeric_cols(df)
+    categorical_cols = _categorical_cols(df)
+    missing_pct = df.isna().mean().mean() * 100 if rows else 0.0
+    dup_count = int(df.duplicated().sum())
+    parts = [
+        f"{rows:,} rows and {cols} columns ({len(numeric_cols)} numeric, {len(categorical_cols)} categorical/text).",
+        f"{_fmt_pct(missing_pct)} of all cells are missing on average, and {dup_count:,} rows are fully duplicated.",
+    ]
+    if numeric_cols:
+        skews = {c: df[c].dropna().skew() for c in numeric_cols if df[c].dropna().shape[0] > 2}
+        skewed = [c for c, v in skews.items() if pd.notna(v) and abs(v) > 1]
+        if skewed:
+            parts.append(f"Highly skewed columns: {', '.join(skewed[:5])}.")
+        if len(numeric_cols) >= 2:
+            corr = df[numeric_cols].corr(numeric_only=True)
+            pairs = []
+            for i, a in enumerate(numeric_cols):
+                for b in numeric_cols[i + 1 :]:
+                    v = corr.loc[a, b]
+                    if pd.notna(v):
+                        pairs.append((a, b, float(v)))
+            if pairs:
+                pairs.sort(key=lambda p: -abs(p[2]))
+                a, b, v = pairs[0]
+                parts.append(f"Strongest correlation: '{a}' & '{b}' (r = {v:.2f}).")
+    return QAResult(
+        answer=" ".join(parts),
+        computed=True,
+        method="overview",
+        code="df.shape; df.isna().mean().mean(); df.duplicated().sum(); df.corr(numeric_only=True)",
+        value={"rows": rows, "columns": cols, "missing_pct": round(missing_pct, 2), "duplicates": dup_count},
+    )
+
+
+def _intent_value_counts(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(
+        norm,
+        (
+            "value counts", "breakdown of", "frequency of", "frequencies of",
+            "distribution of categories", "category breakdown", "counts of each",
+            "how are the values distributed",
+        ),
+    ):
+        return None
+    columns = _find_columns(question, list(df.columns))
+    if not columns:
+        return None
+    col = columns[0]
+    counts = df[col].value_counts(dropna=True)
+    if counts.empty:
+        return None
+    total = len(df)
+    top = counts.head(10)
+    lines = "; ".join(f"{idx}: {int(v):,} ({v / total * 100:.1f}%)" for idx, v in top.items())
+    more_note = f" (+{len(counts) - 10} more distinct values)" if len(counts) > 10 else ""
+    return QAResult(
+        answer=f"Value counts for '{col}': {lines}{more_note}.",
+        computed=True,
+        method="value_counts",
+        code=f"df['{col}'].value_counts()",
+        value={str(idx): int(v) for idx, v in top.items()},
+        columns_used=[col],
+    )
+
+
+_COLUMN_RANK_STATS: dict[str, str] = {
+    "variance": "var",
+    "standard deviation": "std",
+    "average": "mean",
+    "mean": "mean",
+    "skew": "skew",
+    "skewness": "skew",
+    "missing": "missing",
+    "unique": "nunique",
+}
+_COLUMN_RANK_LABELS: dict[str, str] = {
+    "var": "variance",
+    "std": "standard deviation",
+    "mean": "average",
+    "skew": "skewness",
+    "missing": "missing percentage",
+    "nunique": "unique-value count",
+}
+
+
+def _intent_column_ranking(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(norm, ("column", "columns", "variable", "variables", "field", "fields")):
+        return None
+    if not (_has_any(norm, _SUPERLATIVE_HIGH) or _has_any(norm, _SUPERLATIVE_LOW)):
+        return None
+    stat_key = None
+    for phrase, key in _COLUMN_RANK_STATS.items():
+        if _has_any(norm, (phrase,)):
+            stat_key = key
+            break
+    if stat_key is None:
+        return None
+    ascending = _has_any(norm, _SUPERLATIVE_LOW) and not _has_any(norm, _SUPERLATIVE_HIGH)
+
+    numeric_cols = _numeric_cols(df)
+    if stat_key == "missing":
+        values = df.isna().mean() * 100
+    elif stat_key == "nunique":
+        values = df.nunique(dropna=True).astype(float)
+    elif stat_key in ("var", "std", "mean", "skew"):
+        if not numeric_cols:
+            return None
+        values = getattr(df[numeric_cols], stat_key)(numeric_only=True)
+    else:
+        return None
+
+    values = values.dropna().sort_values(ascending=ascending)
+    if values.empty:
+        return None
+    top_col = str(values.index[0])
+    top_val = float(values.iloc[0])
+    label = _COLUMN_RANK_LABELS[stat_key]
+    direction = "lowest" if ascending else "highest"
+    suffix = "%" if stat_key == "missing" else ""
+    return QAResult(
+        answer=f"'{top_col}' has the {direction} {label} ({_fmt_num(top_val)}{suffix}).",
+        computed=True,
+        method="column_ranking",
+        code=(
+            "df.isna().mean() * 100" if stat_key == "missing"
+            else "df.nunique()" if stat_key == "nunique"
+            else f"df.select_dtypes(include='number').{stat_key}()"
+        ),
+        value={"column": top_col, "value": top_val},
+        columns_used=[top_col],
+    )
+
+
+def _intent_ratio(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(norm, ("ratio of", "ratio between")):
+        return None
+    numeric_cols = _numeric_cols(df)
+    matched = _find_columns_by_position(question, numeric_cols)
+    if len(matched) < 2:
+        return None
+    col_a, col_b = matched[0], matched[1]
+    sum_a, sum_b = df[col_a].sum(), df[col_b].sum()
+    if not sum_b:
+        return None
+    ratio = sum_a / sum_b
+    return QAResult(
+        answer=(
+            f"The ratio of total '{col_a}' to total '{col_b}' is {ratio:.3f} "
+            f"(sum {col_a} = {_fmt_num(float(sum_a))}, sum {col_b} = {_fmt_num(float(sum_b))})."
+        ),
+        computed=True,
+        method="ratio",
+        code=f"df['{col_a}'].sum() / df['{col_b}'].sum()",
+        value=float(ratio),
+        columns_used=[col_a, col_b],
+    )
+
+
+def _intent_trend(question: str, df: pd.DataFrame) -> QAResult | None:
+    norm = _normalize(question)
+    if not _has_any(
+        norm, ("trend of", "trend in", "over time", "over the years", "changed over", "change over time")
+    ):
+        return None
+    time_col = None
+    for c in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[c]):
+            time_col = c
+            break
+    if time_col is None:
+        for c in df.columns:
+            norm_c = _normalize(c)
+            if norm_c in ("year", "yr", "date") or norm_c.endswith(" year") or norm_c.endswith(" date"):
+                time_col = c
+                break
+    if time_col is None:
+        return None
+    numeric_cols = [c for c in _numeric_cols(df) if c != time_col]
+    matched = _find_columns(question, numeric_cols)
+    if not matched:
+        return None
+    metric = matched[0]
+    work = df[[time_col, metric]].dropna().copy()
+    if pd.api.types.is_datetime64_any_dtype(work[time_col]):
+        work["_x"] = work[time_col].dt.year.astype(float)
+    else:
+        work["_x"] = pd.to_numeric(work[time_col], errors="coerce")
+        work = work.dropna(subset=["_x"])
+    if len(work) < 3 or work["_x"].nunique() < 2:
+        return None
+    slope, intercept = np.polyfit(work["_x"], work[metric].astype(float), 1)
+    slope, intercept = float(slope), float(intercept)
+    direction = "an increasing" if slope > 0 else ("a decreasing" if slope < 0 else "a flat")
+    return QAResult(
+        answer=(
+            f"'{metric}' shows {direction} trend over '{time_col}': about {_fmt_num(abs(slope))} per unit of "
+            f"{time_col} (linear fit slope = {slope:.4f})."
+        ),
+        computed=True,
+        method="trend",
+        code=f"import numpy as np\nnp.polyfit(df['{time_col}'], df['{metric}'], 1)  # (slope, intercept)",
+        value={"slope": slope, "intercept": intercept},
+        columns_used=[time_col, metric],
+    )
+
+
 def _intent_missing(question: str, df: pd.DataFrame) -> QAResult | None:
     norm = _normalize(question)
     if not _has_any(norm, ("missing", "null value", "null values", "nan values", "nulls")):
@@ -770,7 +1060,7 @@ def _intent_correlation(question: str, df: pd.DataFrame) -> QAResult | None:
     numeric_cols = _numeric_cols(df)
     if len(numeric_cols) < 2:
         return None
-    matched = _find_columns(question, numeric_cols)
+    matched = _find_columns_by_position(question, numeric_cols)
     if len(matched) >= 2:
         col_a, col_b = matched[0], matched[1]
         value = df[[col_a, col_b]].corr().iloc[0, 1]
@@ -823,10 +1113,37 @@ _NUMBER_PATTERN = r"(-?\d[\d,]*\.?\d*)"
 _BETWEEN_RE = re.compile(r"between\s+" + _NUMBER_PATTERN + r"\s+and\s+" + _NUMBER_PATTERN)
 
 
+def _apply_comparator(series: pd.Series, symbol: str, threshold: float) -> pd.Series:
+    if symbol == ">":
+        return series > threshold
+    if symbol == ">=":
+        return series >= threshold
+    if symbol == "<":
+        return series < threshold
+    if symbol == "<=":
+        return series <= threshold
+    if symbol == "!=":
+        return series != threshold
+    return series == threshold
+
+
+def _find_comparator(text: str) -> tuple[str, re.Match[str], float] | None:
+    for pattern, symbol in _COMPARATORS:
+        m = re.search(pattern + r"\s*" + _NUMBER_PATTERN, text)
+        if m:
+            threshold = _parse_number(m.group(1))
+            if threshold is not None:
+                return symbol, m, threshold
+    return None
+
+
 def _intent_condition(question: str, df: pd.DataFrame) -> QAResult | None:
     lower = question.lower()
     numeric_cols = _numeric_cols(df)
-    columns = _find_columns(question, numeric_cols)
+    # Position-based, not specificity-based: "age over 30 and salary above 60000" needs 'age'
+    # picked for the first clause because it's mentioned first, not because 'salary' is a longer
+    # column name.
+    columns = _find_columns_by_position(question, numeric_cols)
 
     between_match = _BETWEEN_RE.search(lower)
     if between_match and columns:
@@ -856,35 +1173,57 @@ def _intent_condition(question: str, df: pd.DataFrame) -> QAResult | None:
                     columns_used=[col],
                 )
 
-    comparator_symbol = None
-    match = None
-    for pattern, symbol in _COMPARATORS:
-        m = re.search(pattern + r"\s*" + _NUMBER_PATTERN, lower)
-        if m:
-            comparator_symbol = symbol
-            match = m
-            break
-    if match is None:
+    first = _find_comparator(lower)
+    if first is None or not columns:
         return None
-    threshold = _parse_number(match.group(1))
-    if threshold is None or not columns:
-        return None
+    comparator_symbol, match, threshold = first
     col = columns[0]
+
+    # Look for a second "and <column> <comparator> <number>" clause after the first match, so
+    # "age over 30 and fare above 50" filters on both conditions together rather than just the
+    # first one found.
+    and_idx = lower.find(" and ", match.end())
+    if and_idx != -1:
+        remainder_text = question[and_idx + 5 :]
+        remainder_lower = lower[and_idx + 5 :]
+        second_candidates = [c for c in numeric_cols if c != col]
+        second_cols = _find_columns(remainder_text, second_candidates)
+        second = _find_comparator(remainder_lower)
+        if second_cols and second is not None:
+            symbol2, _, threshold2 = second
+            col2 = second_cols[0]
+            combined = df[[col, col2]].dropna()
+            if not combined.empty:
+                mask1 = _apply_comparator(combined[col], comparator_symbol, threshold)
+                mask2 = _apply_comparator(combined[col2], symbol2, threshold2)
+                mask = mask1 & mask2
+                count = int(mask.sum())
+                total = len(combined)
+                pct = (count / total * 100) if total else 0.0
+                answer = (
+                    f"{count:,} rows have '{col}' {comparator_symbol} {_fmt_num(threshold)} AND "
+                    f"'{col2}' {symbol2} {_fmt_num(threshold2)} ({_fmt_pct(pct)} of {total:,})."
+                )
+                return QAResult(
+                    answer=answer,
+                    computed=True,
+                    method="condition_filter",
+                    code=f"((df['{col}'] {comparator_symbol} {threshold}) & (df['{col2}'] {symbol2} {threshold2})).sum()",
+                    value={
+                        "conditions": [
+                            {"column": col, "comparator": comparator_symbol, "threshold": threshold},
+                            {"column": col2, "comparator": symbol2, "threshold": threshold2},
+                        ],
+                        "count": count,
+                        "percentage": round(pct, 2),
+                    },
+                    columns_used=[col, col2],
+                )
+
     series = df[col].dropna()
     if series.empty:
         return None
-    if comparator_symbol == ">":
-        mask = series > threshold
-    elif comparator_symbol == ">=":
-        mask = series >= threshold
-    elif comparator_symbol == "<":
-        mask = series < threshold
-    elif comparator_symbol == "<=":
-        mask = series <= threshold
-    elif comparator_symbol == "!=":
-        mask = series != threshold
-    else:
-        mask = series == threshold
+    mask = _apply_comparator(series, comparator_symbol, threshold)
     count = int(mask.sum())
     total = len(series)
     pct = (count / total * 100) if total else 0.0
@@ -1136,6 +1475,7 @@ def _intent_time_change(question: str, df: pd.DataFrame) -> QAResult | None:
 
 
 _INTENTS: list[Callable[[str, pd.DataFrame], QAResult | None]] = [
+    _intent_overview,
     _intent_ml_baseline,
     _intent_normality,
     _intent_distribution_type,
@@ -1143,17 +1483,22 @@ _INTENTS: list[Callable[[str, pd.DataFrame], QAResult | None]] = [
     _intent_group_comparison_test,
     _intent_chi_square,
     _intent_covariance,
+    _intent_ratio,
     _intent_outliers,
     _intent_percentile,
     _intent_iqr,
     _intent_range,
+    _intent_duplicates,
+    _intent_value_counts,
     _intent_mode,
     _intent_missing,
     _intent_unique,
     _intent_skew,
     _intent_correlation,
     _intent_time_change,
+    _intent_trend,
     _intent_condition,
+    _intent_column_ranking,
     _intent_topn,
     _intent_aggregation,
     _intent_shape,
@@ -1165,7 +1510,9 @@ def _fallback(df: pd.DataFrame, snapshot: dict[str, Any] | None) -> QAResult:
     hint = (
         "Try things like: 'average <column>?', '<column> over <number>?', 'correlation between X and Y', "
         "'is X normally distributed?', 'significant difference in X between Y groups?', "
-        "'build a model predicting <column>', or 'outliers in <column>'."
+        "'build a model predicting <column>', 'outliers in <column>', 'describe this dataset', "
+        "'value counts of <column>', 'ratio of X to Y', 'trend of <column> over time', or "
+        "'which column has the highest variance?'."
     )
     if snapshot:
         msg = (

@@ -224,3 +224,28 @@ def search_kaggle_datasets(query: str, max_results: int = 60) -> list[dict[str, 
                 "is_demo": True,
             }
         ]
+
+
+def get_dataset_description(dataset_slug: str) -> dict[str, Any]:
+    """Fetch a Kaggle dataset's title/subtitle/description text - the same content shown on the
+    dataset's "About" page. Kaggle's public API does not reliably expose structured per-column
+    metadata (the `columns` field on file listings is empty for essentially every dataset we
+    tested, including well-documented ones), so this free-text description is the actual source
+    for anything resembling column documentation; see dataset.descriptions for the best-effort
+    structured extraction from it."""
+    if not validate_kaggle_credentials():
+        return {}
+    owner, slug = dataset_slug.split("/", 1)
+    response = requests.get(
+        f"{KAGGLE_API_BASE}/datasets/view/{quote(owner)}/{quote(slug)}",
+        **_kaggle_request_kwargs(),
+    )
+    response.raise_for_status()
+    data = response.json()
+    return {
+        "title": data.get("title") or data.get("titleNullable") or "",
+        "subtitle": data.get("subtitle") or data.get("subtitleNullable") or "",
+        "description": data.get("description") or data.get("descriptionNullable") or "",
+        "license": data.get("licenseName") or data.get("licenseNameNullable") or "",
+        "url": f"https://www.kaggle.com/datasets/{dataset_slug}",
+    }

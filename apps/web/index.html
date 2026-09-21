@@ -24,7 +24,7 @@
         color: var(--text);
       }
       .app {
-        max-width: 1680px;
+        max-width: 1960px;
         margin: 0 auto;
         padding: 24px;
       }
@@ -52,15 +52,32 @@
         background: var(--accent);
         color: #082f49;
         font-weight: 700;
+        transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
+      }
+      .btn:hover:not(:disabled) {
+        filter: brightness(1.12);
+        box-shadow: 0 4px 14px rgba(56, 189, 248, 0.28);
+      }
+      .btn:active:not(:disabled) {
+        transform: translateY(1px) scale(0.98);
+        filter: brightness(0.96);
+      }
+      .btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
       }
       .secondary {
         background: var(--panel-alt);
         color: var(--text);
         border: 1px solid #334155;
       }
+      .secondary:hover:not(:disabled) {
+        filter: brightness(1.25);
+        box-shadow: 0 4px 14px rgba(148, 163, 184, 0.16);
+      }
       .grid {
         display: grid;
-        grid-template-columns: 0.85fr 2.55fr;
+        grid-template-columns: 560px 1fr;
         gap: 20px;
         align-items: start;
       }
@@ -70,6 +87,7 @@
         border-radius: 12px;
         padding: 18px;
         box-shadow: 0 10px 20px rgba(15, 23, 42, 0.2);
+        transition: border-color 0.15s ease;
       }
       .panel h2, .panel h3 {
         margin-top: 0;
@@ -79,6 +97,7 @@
         top: 20px;
         max-height: calc(100vh - 40px);
         overflow-y: auto;
+        overflow-x: hidden;
       }
       .search-box {
         display: flex;
@@ -87,11 +106,30 @@
       }
       .search-box input {
         flex: 1;
+        min-width: 0;
         padding: 10px 12px;
         border-radius: 8px;
         border: 1px solid #475569;
         background: #0b1220;
         color: var(--text);
+      }
+      /* Native file inputs ignore normal flex-shrink and force their container to overflow, so
+         this one gets its own full-width row instead of sharing a row with the Upload button. */
+      .upload-row {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 12px 0 18px;
+      }
+      .upload-row input[type="file"] {
+        width: 100%;
+        max-width: 100%;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid #475569;
+        background: #0b1220;
+        color: var(--text);
+        font-size: 0.85rem;
       }
       .divider {
         text-align: center;
@@ -107,6 +145,8 @@
       }
       .results {
         display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+        align-items: start;
         gap: 12px;
         max-height: 55vh;
         overflow-y: auto;
@@ -122,6 +162,11 @@
         border: 1px solid #334155;
         border-radius: 8px;
         padding: 12px;
+        transition: border-color 0.15s ease, background 0.15s ease;
+      }
+      .result-item:hover {
+        border-color: rgba(56, 189, 248, 0.45);
+        background: rgba(30, 41, 59, 1);
       }
       .result-item strong {
         display: block;
@@ -138,6 +183,11 @@
         border: 1px solid rgba(52, 211, 153, 0.4);
         border-radius: 10px;
         padding: 12px;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+      .stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(15, 118, 110, 0.22);
       }
       .stat-card .label {
         font-size: 12px;
@@ -149,10 +199,45 @@
         font-weight: 700;
         margin-top: 4px;
       }
+      .insights {
+        margin-top: 14px;
+      }
+      .insights h3 {
+        font-size: 0.95rem;
+        margin-bottom: 6px;
+      }
       .insights ul {
         margin: 0;
-        padding-left: 18px;
+        padding-left: 0;
         color: var(--text);
+        list-style: none;
+      }
+      .insights ul li {
+        position: relative;
+        padding: 3px 0 3px 16px;
+        font-size: 0.86rem;
+        line-height: 1.45;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+      }
+      .insights ul li:last-child { border-bottom: none; }
+      .insights ul li::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 11px;
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--accent-2);
+      }
+      .insights-toggle {
+        background: none;
+        border: none;
+        color: var(--accent);
+        font-size: 0.8rem;
+        cursor: pointer;
+        padding: 6px 0 0;
+        text-decoration: underline;
       }
       .recommendations {
         margin-top: 18px;
@@ -167,6 +252,7 @@
         border-radius: 999px;
         padding: 6px 10px;
         font-size: 0.85rem;
+        transition: background 0.15s ease;
       }
       .chart-area {
         margin-top: 16px;
@@ -188,6 +274,14 @@
         border: 1px solid #475569;
         background: #0b1220;
         color: var(--text);
+        transition: border-color 0.15s ease;
+      }
+      .search-box input:focus,
+      .editor select:focus, .editor input:focus,
+      .chart-title-input:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
       }
       .chart-grid {
         display: grid;
@@ -257,6 +351,45 @@
         border-top: 1px solid rgba(148, 163, 184, 0.2);
         padding-top: 14px;
       }
+      .about-dataset {
+        margin: 14px 0;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.5);
+        padding: 4px 14px;
+      }
+      .about-dataset summary {
+        cursor: pointer;
+        padding: 10px 0;
+        font-weight: 600;
+        color: var(--text);
+        user-select: none;
+        list-style: none;
+      }
+      .about-dataset summary::-webkit-details-marker { display: none; }
+      .about-dataset summary::before { content: '▸ '; color: var(--muted); }
+      .about-dataset[open] summary::before { content: '▾ '; }
+      .about-dataset-body {
+        padding: 0 0 14px;
+        font-size: 0.88rem;
+        line-height: 1.55;
+        color: var(--text);
+      }
+      .about-dataset-body a { color: var(--accent); }
+      .column-meanings {
+        margin-top: 12px;
+        display: grid;
+        gap: 6px;
+      }
+      .column-meanings .row {
+        display: grid;
+        grid-template-columns: 160px 1fr;
+        gap: 10px;
+        font-size: 0.85rem;
+        padding: 4px 0;
+        border-top: 1px solid rgba(148, 163, 184, 0.12);
+      }
+      .column-meanings .row strong { color: var(--accent-2); }
       @media (max-width: 980px) {
         .grid {
           grid-template-columns: 1fr;
@@ -293,15 +426,19 @@
 
           <div class="divider">— or —</div>
           <div class="hint">Analyze a file already on your computer. Nothing is uploaded to Kaggle or saved on the server — it's parsed in memory just for this analysis.</div>
-          <div class="search-box">
+          <div class="upload-row">
             <input type="file" id="upload-input" accept=".csv,.tsv,.json,.parquet,.xlsx,.xls" />
-            <button class="btn secondary" id="upload-btn">Upload</button>
+            <button class="btn secondary" id="upload-btn" style="width: 100%;">Upload</button>
           </div>
         </aside>
 
         <main class="panel">
           <h2>Dataset overview</h2>
           <div id="dataset-info">No dataset loaded yet.</div>
+          <details class="about-dataset" id="about-dataset" hidden>
+            <summary>About this dataset (from Kaggle)</summary>
+            <div class="about-dataset-body" id="about-dataset-body"></div>
+          </details>
           <div id="sample-banner" class="insights" hidden></div>
           <div class="editor">
             <button class="btn secondary" id="full-analysis-btn" hidden>Run full analysis</button>
@@ -375,6 +512,8 @@
       const uploadInput = document.getElementById('upload-input');
       const uploadBtn = document.getElementById('upload-btn');
       const datasetInfoEl = document.getElementById('dataset-info');
+      const aboutDatasetEl = document.getElementById('about-dataset');
+      const aboutDatasetBodyEl = document.getElementById('about-dataset-body');
       const sampleBannerEl = document.getElementById('sample-banner');
       const fullAnalysisBtn = document.getElementById('full-analysis-btn');
       const downloadFullBtn = document.getElementById('download-full-btn');
@@ -421,8 +560,59 @@
         legend: {orientation: 'h', y: -0.2},
       };
 
-      function fieldOptions(fields, includeBlank = false, blankLabel = 'None') {
-        return `${includeBlank ? `<option value="">${blankLabel}</option>` : ''}${fields.map((field) => `<option value="${field}">${field}</option>`).join('')}`;
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text == null ? '' : String(text);
+        return div.innerHTML;
+      }
+
+      function boldify(escapedText) {
+        return escapedText.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      }
+
+      // Kaggle descriptions are third-party, untrusted text. Everything is escaped via
+      // escapeHtml() first; the only real HTML tags inserted afterward are our own literal
+      // wrappers (h1-6/ul/li/p/strong), never derived from the input, so this is safe against
+      // script injection even though we render it into the DOM.
+      function formatDescription(text) {
+        if (!text) return '<p>No description provided.</p>';
+        const lines = text.split('\n');
+        const html = [];
+        let inList = false;
+        const closeList = () => { if (inList) { html.push('</ul>'); inList = false; } };
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line) { closeList(); continue; }
+          const heading = line.match(/^(#{1,4})\s+(.*)$/);
+          if (heading) {
+            closeList();
+            const level = Math.min(heading[1].length + 3, 6);
+            html.push(`<h${level} style="margin: 12px 0 4px; font-size: 1rem;">${escapeHtml(heading[2])}</h${level}>`);
+            continue;
+          }
+          const bullet = line.match(/^[-*]\s+(.*)$/);
+          if (bullet) {
+            if (!inList) { html.push('<ul style="margin: 4px 0; padding-left: 20px;">'); inList = true; }
+            html.push(`<li>${boldify(escapeHtml(bullet[1]))}</li>`);
+            continue;
+          }
+          closeList();
+          html.push(`<p style="margin: 6px 0;">${boldify(escapeHtml(line))}</p>`);
+        }
+        closeList();
+        return html.join('');
+      }
+
+      function fieldOptions(fields, includeBlank = false, blankLabel = 'None', descriptions = {}) {
+        const blank = includeBlank ? `<option value="">${blankLabel}</option>` : '';
+        const opts = fields
+          .map((field) => {
+            const desc = descriptions[field];
+            const titleAttr = desc ? ` title="${escapeHtml(desc)}"` : '';
+            return `<option value="${field}"${titleAttr}>${field}</option>`;
+          })
+          .join('');
+        return blank + opts;
       }
 
       function aggregateRows(rows, groupField, valueField, method) {
@@ -571,11 +761,12 @@
           area: node.querySelector('.chart-area'),
           saveBtn: node.querySelector('.chart-save-btn'),
         };
+        const columnDescriptions = state.dataset?.column_descriptions || {};
         slot.type.innerHTML = chartTypes.map(([value, text]) => `<option value="${value}">${text}</option>`).join('');
-        slot.x.innerHTML = fieldOptions(fields);
-        slot.y.innerHTML = fieldOptions(fields, true);
+        slot.x.innerHTML = fieldOptions(fields, false, 'None', columnDescriptions);
+        slot.y.innerHTML = fieldOptions(fields, true, 'None', columnDescriptions);
         slot.agg.innerHTML = aggregations.map(([value, text]) => `<option value="${value}">${text}</option>`).join('');
-        slot.group.innerHTML = fieldOptions(fields, true, 'No grouping');
+        slot.group.innerHTML = fieldOptions(fields, true, 'No grouping', columnDescriptions);
         slot.sort.innerHTML = sortOptions.map(([value, text]) => `<option value="${value}">${text}</option>`).join('');
 
         slot.type.value = chartTypes.some(([value]) => value === recommendation?.type) ? recommendation.type : 'histogram';
@@ -620,6 +811,31 @@
         chartSlots = [];
         const labels = ['Primary relationship', 'Distribution or categories', 'Quality and comparison'];
         labels.forEach((label, index) => createChartSlot(label, fields, recommendations[index]));
+      }
+
+      function renderCappedList(el, items, cap, emptyMessage) {
+        if (!items || !items.length) {
+          el.innerHTML = `<li>${escapeHtml(emptyMessage)}</li>`;
+          return;
+        }
+        const visible = items.slice(0, cap);
+        const rest = items.slice(cap);
+        const groupClass = `capped-${Math.random().toString(36).slice(2, 8)}`;
+        let html = visible.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
+        if (rest.length) {
+          html += rest.map((item) => `<li class="${groupClass}" hidden>${escapeHtml(item)}</li>`).join('');
+          html += `<li style="border: none; padding-top: 4px;"><button type="button" class="insights-toggle">+${rest.length} more</button></li>`;
+        }
+        el.innerHTML = html;
+        if (rest.length) {
+          const toggleBtn = el.querySelector('.insights-toggle');
+          toggleBtn.addEventListener('click', () => {
+            const hiddenItems = el.querySelectorAll(`.${groupClass}`);
+            const isHidden = hiddenItems[0]?.hidden;
+            hiddenItems.forEach((li) => { li.hidden = !isHidden; });
+            toggleBtn.textContent = isHidden ? 'Show less' : `+${rest.length} more`;
+          });
+        }
       }
 
       function renderFindings() {
@@ -742,6 +958,23 @@
           <div><strong>Columns:</strong> ${snap.columns ?? state.analysis.shape.columns}</div>
         `;
 
+        const kaggleInfo = state.dataset?.kaggle_info;
+        const columnDescriptions = state.dataset?.column_descriptions || {};
+        if (kaggleInfo && kaggleInfo.description) {
+          aboutDatasetEl.hidden = false;
+          const meaningsRows = Object.entries(columnDescriptions)
+            .map(([col, desc]) => `<div class="row"><strong>${escapeHtml(col)}</strong><span>${escapeHtml(desc)}</span></div>`)
+            .join('');
+          const meaningsBlock = meaningsRows
+            ? `<div class="column-meanings"><strong>Column meanings (from the dataset description):</strong>${meaningsRows}</div>`
+            : '';
+          const licenseLine = kaggleInfo.license ? `<p class="hint" style="margin-top: 10px;">License: ${escapeHtml(kaggleInfo.license)}</p>` : '';
+          aboutDatasetBodyEl.innerHTML = formatDescription(kaggleInfo.description) + meaningsBlock + licenseLine;
+        } else {
+          aboutDatasetEl.hidden = true;
+          aboutDatasetBodyEl.innerHTML = '';
+        }
+
         const sample = state.analysis.sample;
         if (sample && sample.is_sample) {
           const sampleMb = sample.sample_bytes
@@ -769,9 +1002,9 @@
           <div class="stat-card"><span class="label">Charts suggested</span><span class="value">${snap.recommended_visualizations ?? 0}</span></div>
         `;
 
-        insightsList.innerHTML = (state.analysis.insights || []).map((insight) => `<li>${insight}</li>`).join('');
-        questionsList.innerHTML = (state.analysis.research_questions || []).map((question) => `<li>${question}</li>`).join('') || '<li>No research questions suggested yet.</li>';
-        qualityList.innerHTML = (state.analysis.data_quality_issues || []).map((issue) => `<li>${issue}</li>`).join('') || '<li>No major data-quality issues detected.</li>';
+        renderCappedList(insightsList, state.analysis.insights, 4, 'No notable insights detected.');
+        renderCappedList(questionsList, state.analysis.research_questions, 4, 'No research questions suggested yet.');
+        renderCappedList(qualityList, state.analysis.data_quality_issues, 4, 'No major data-quality issues detected.');
 
         recommendationsEl.innerHTML = (state.analysis.recommendations || [])
           .map((item) => `<span class="chip">${item.type}</span>`)

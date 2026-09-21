@@ -33,9 +33,11 @@ from analysis.notebook_export import build_notebook
 from analysis.qa_engine import answer_question
 from dataset.kaggle_search import (
     download_kaggle_dataset,
+    get_dataset_description,
     kaggle_credential_status,
     search_kaggle_datasets,
 )
+from dataset.descriptions import extract_column_descriptions
 from dataset.loader import load_dataset, load_dataframe_from_bytes
 from dataset.streaming import DEFAULT_SAMPLE_BYTES, load_dataset_sample
 import workspace_cache
@@ -57,6 +59,18 @@ SAMPLE_BYTES = int(float(os.getenv("ANALYSIS_SAMPLE_MB", "5")) * 1024 * 1024) or
 
 def _serializable_dataset(dataset: dict[str, object]) -> dict[str, object]:
     return {key: value for key, value in dataset.items() if key not in {"dataframe", "path"}}
+
+
+def _attach_kaggle_description(dataset: dict[str, object], df: pd.DataFrame, slug: str) -> None:
+    """Best-effort: fetch the dataset's Kaggle description and extract any column meanings the
+    author wrote into it. Never fails the request - a bad/missing description just means the UI
+    won't show one."""
+    try:
+        info = get_dataset_description(slug)
+    except Exception:
+        info = {}
+    dataset["kaggle_info"] = info
+    dataset["column_descriptions"] = extract_column_descriptions(info.get("description", ""), list(df.columns))
 
 
 def _cache_dataset(dataset: dict[str, object], df: pd.DataFrame, dataset_id: str) -> None:
@@ -124,6 +138,7 @@ def analyze_dataset_from_kaggle(payload: dict[str, object]) -> dict[str, object]
         dataset = load_dataset_sample(str(slug), max_sample_bytes=sample_bytes)
         df = dataset["dataframe"]
         _cache_dataset(dataset, df, dataset_id=str(slug))
+        _attach_kaggle_description(dataset, df, str(slug))
         analysis = _analysis_with_preview(df, dataset["name"], sample_info=dataset.get("sample"))
         return {"dataset": _serializable_dataset(dataset), "analysis": analysis}
     except Exception as exc:  # pragma: no cover
@@ -147,6 +162,7 @@ def analyze_dataset_full(payload: dict[str, str]) -> dict[str, object]:
             dataset = load_dataset(dataset_path)
             df = dataset["dataframe"]
             _cache_dataset(dataset, df, dataset_id=str(slug))
+            _attach_kaggle_description(dataset, df, str(slug))
             analysis = _analysis_with_preview(df, dataset["name"])
             return {"dataset": _serializable_dataset(dataset), "analysis": analysis}
     except Exception as exc:  # pragma: no cover
