@@ -81,6 +81,21 @@ def tiny_df() -> pd.DataFrame:
     return pd.DataFrame({"score": [10, 20, 30], "label": ["a", "b", "c"]})
 
 
+@pytest.fixture
+def boolean_df() -> pd.DataFrame:
+    """Contains a true boolean-dtype column - pandas treats bool as a numeric subtype
+    (is_numeric_dtype returns True for it), which is what caused the real "numpy boolean
+    subtract" crash this fixture guards against."""
+    n = 40
+    return pd.DataFrame(
+        {
+            "id": range(n),
+            "is_active": [True, False] * (n // 2),
+            "amount": np.random.default_rng(3).normal(100, 20, n),
+        }
+    )
+
+
 ALL_FIXTURES = ["sales_df", "survey_df", "events_df", "tiny_df"]
 
 
@@ -352,3 +367,35 @@ class TestChainedTransforms:
     def test_empty_dataframe_raises(self):
         with pytest.raises(TransformError, match="empty"):
             apply_transform(pd.DataFrame(), "filter", {"column": "x", "comparator": ">", "value": "1"})
+
+
+# ---------------------------------------------------------------------------
+# Boolean columns - pandas' is_numeric_dtype returns True for bool dtype, which previously let
+# boolean columns slip into numeric-only code paths (IQR outlier math in particular) and crash
+# with "numpy boolean subtract... not supported". These pin the fix in place.
+# ---------------------------------------------------------------------------
+
+
+class TestBooleanColumns:
+    @pytest.mark.parametrize("raw,expected", [("True", True), ("true", True), ("1", True), ("yes", True),
+                                               ("False", False), ("false", False), ("0", False), ("no", False)])
+    def test_filter_accepts_true_false_strings(self, boolean_df, raw, expected):
+        result, _ = apply_transform(boolean_df, "filter", {"column": "is_active", "comparator": "==", "value": raw})
+        assert (result["is_active"] == expected).all()
+        assert len(result) == int((boolean_df["is_active"] == expected).sum())
+
+    def test_filter_rejects_nonsense_value(self, boolean_df):
+        with pytest.raises(TransformError, match="not a valid true/false value"):
+            apply_transform(boolean_df, "filter", {"column": "is_active", "comparator": "==", "value": "maybe"})
+
+    def test_drop_outliers_on_boolean_raises_cleanly_not_crash(self, boolean_df):
+        # This previously crashed with a raw numpy TypeError instead of a user-facing message.
+        with pytest.raises(TransformError, match="true/false column"):
+            apply_transform(boolean_df, "drop_outliers", {"column": "is_active"})
+
+    def test_boolean_column_does_not_block_other_operations(self, boolean_df):
+        # A boolean column elsewhere in the frame shouldn't stop unrelated transforms on the
+        # dataset from working.
+        result, _ = apply_transform(boolean_df, "filter", {"column": "amount", "comparator": ">", "value": "100"})
+        assert (result["amount"] > 100).all()
+        assert "is_active" in result.columns

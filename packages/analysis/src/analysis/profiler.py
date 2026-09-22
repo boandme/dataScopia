@@ -22,10 +22,14 @@ def _infer_column_type(series: pd.Series) -> str:
         return "unknown"
     if pd.api.types.is_datetime64_any_dtype(series):
         return "datetime"
-    if pd.api.types.is_numeric_dtype(series):
-        return "numeric"
+    # Must come before is_numeric_dtype: pandas treats bool as a numeric subtype, so
+    # is_numeric_dtype(bool_series) is True. Checking numeric first would silently
+    # misclassify boolean columns as "numeric", sending them into IQR/quantile math where
+    # `q1 - 1.5 * iqr` on boolean values raises "numpy boolean subtract... not supported".
     if pd.api.types.is_bool_dtype(series):
         return "boolean"
+    if pd.api.types.is_numeric_dtype(series):
+        return "numeric"
     if series.nunique() <= 20 and series.astype(str).str.len().mean() < 25:
         return "categorical"
     return "text"

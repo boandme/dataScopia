@@ -3,41 +3,85 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Kaggle Dataset Analysis Workspace</title>
+    <title>DataScopia — Kaggle Dataset Analysis Workspace</title>
     <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
     <style>
       :root {
-        --bg: #0f172a;
-        --panel: #111827;
-        --panel-alt: #1f2937;
-        --text: #e5e7eb;
-        --muted: #9ca3af;
+        /* DataScopia brand palette: deep indigo-navy ground, an indigo-to-cyan "lens" gradient
+           as the signature brand mark, cyan retained as the interactive accent so existing
+           buttons/links/focus-states stay familiar. */
+        --bg: #080b16;
+        --panel: #10142a;
+        --panel-alt: #1a2040;
+        --text: #e8eaf6;
+        --muted: #8b93b5;
+        --brand-1: #818cf8;
+        --brand-2: #38bdf8;
+        --brand-gradient: linear-gradient(135deg, var(--brand-1), var(--brand-2));
         --accent: #38bdf8;
         --accent-2: #34d399;
         --danger: #f87171;
       }
       * { box-sizing: border-box; }
+      html, body {
+        /* Belt-and-suspenders against any single element ever forcing a page-level horizontal
+           scrollbar - real overflow sources are fixed at their source (see .chart-card etc),
+           this just guarantees the outcome architecturally. */
+        overflow-x: hidden;
+        max-width: 100%;
+      }
       body {
         margin: 0;
-        font-family: Arial, sans-serif;
-        background: linear-gradient(135deg, #020817, #0f172a 60%);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+        background:
+          radial-gradient(ellipse 1200px 800px at 12% -10%, rgba(129, 140, 248, 0.14), transparent 60%),
+          radial-gradient(ellipse 1000px 700px at 100% 0%, rgba(56, 189, 248, 0.1), transparent 55%),
+          linear-gradient(180deg, #050813, var(--bg) 40%);
+        background-attachment: fixed;
         color: var(--text);
+        min-height: 100vh;
+        overflow-wrap: break-word;
       }
       .app {
-        max-width: 1960px;
+        max-width: 2180px;
         margin: 0 auto;
-        padding: 24px;
+        padding: 28px clamp(20px, 4vw, 48px);
       }
       .header {
         display: flex;
         justify-content: space-between;
         align-items: center;
         gap: 16px;
-        margin-bottom: 24px;
+        margin-bottom: 28px;
+        flex-wrap: wrap;
       }
-      .header h1 {
-        margin: 0;
-        font-size: 2rem;
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+      }
+      .brand-mark {
+        flex-shrink: 0;
+        filter: drop-shadow(0 0 12px rgba(56, 189, 248, 0.35));
+      }
+      .brand-text {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.15;
+      }
+      .brand-name {
+        font-size: 1.85rem;
+        font-weight: 800;
+        letter-spacing: -0.015em;
+        background: var(--brand-gradient);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      .brand-tagline {
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin-top: 2px;
       }
       .top-controls {
         display: flex;
@@ -49,8 +93,8 @@
         padding: 10px 16px;
         border-radius: 8px;
         cursor: pointer;
-        background: var(--accent);
-        color: #082f49;
+        background: var(--brand-gradient);
+        color: #051022;
         font-weight: 700;
         transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
       }
@@ -77,19 +121,41 @@
       }
       .grid {
         display: grid;
-        grid-template-columns: 560px 1fr;
+        grid-template-columns: 620px 1fr;
         gap: 20px;
         align-items: start;
+        min-width: 0;
+      }
+      .main-column {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        min-width: 0;
+      }
+      .overview-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+        gap: 20px;
+        align-items: start;
+        min-width: 0;
       }
       .panel {
-        background: rgba(15, 23, 42, 0.82);
-        border: 1px solid rgba(148, 163, 184, 0.2);
-        border-radius: 12px;
-        padding: 18px;
-        box-shadow: 0 10px 20px rgba(15, 23, 42, 0.2);
+        background: rgba(16, 20, 42, 0.86);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 14px;
+        padding: 22px;
+        box-shadow: 0 14px 30px rgba(2, 4, 14, 0.35);
         transition: border-color 0.15s ease;
       }
-      .panel h2, .panel h3 {
+      .panel h2 {
+        margin: 0 0 4px;
+        padding-left: 13px;
+        border-left: 3px solid transparent;
+        border-image: var(--brand-gradient) 1;
+        font-size: 1.2rem;
+        letter-spacing: -0.01em;
+      }
+      .panel h3 {
         margin-top: 0;
       }
       aside.panel {
@@ -175,8 +241,8 @@
       .stats {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 12px;
-        margin-bottom: 20px;
+        gap: 14px;
+        margin-bottom: 28px;
       }
       .stat-card {
         background: rgba(15, 118, 110, 0.18);
@@ -239,8 +305,63 @@
         padding: 6px 0 0;
         text-decoration: underline;
       }
+      /* Research snapshot / research questions get their own, larger presentation: real cards
+         instead of thin bulleted lines, so they read as a highlight of the analysis rather than
+         an afterthought crammed under the stat tiles. */
+      .research-findings {
+        margin-top: 22px;
+      }
+      .research-findings h3 {
+        font-size: 1.05rem;
+        margin: 0 0 10px;
+      }
+      .research-findings ul {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+        margin-bottom: 24px;
+      }
+      .research-findings ul:last-of-type {
+        margin-bottom: 0;
+      }
+      .research-findings ul li {
+        position: relative;
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        background: rgba(30, 41, 59, 0.55);
+        border-radius: 10px;
+        padding: 13px 16px 13px 34px;
+        font-size: 0.96rem;
+        line-height: 1.6;
+        transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+      }
+      .research-findings ul li:hover {
+        border-color: rgba(56, 189, 248, 0.4);
+        background: rgba(30, 41, 59, 0.9);
+        transform: translateY(-1px);
+      }
+      .research-findings ul li::before {
+        content: '';
+        position: absolute;
+        left: 14px;
+        top: 19px;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--brand-gradient);
+      }
+      .research-findings ul li:has(.insights-toggle) {
+        background: none;
+        border: none;
+        padding: 4px 0 0 16px;
+      }
+      .research-findings ul li:has(.insights-toggle)::before {
+        display: none;
+      }
+      .research-findings .insights-toggle {
+        font-size: 0.88rem;
+      }
       .recommendations {
-        margin-top: 18px;
+        margin: 18px 0 24px;
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
@@ -257,15 +378,28 @@
       .chart-area {
         margin-top: 16px;
         min-height: 320px;
-        background: rgba(15, 23, 42, 0.7);
+        background: rgba(8, 11, 22, 0.5);
         border-radius: 10px;
-        border: 1px solid rgba(148, 163, 184, 0.2);
+        border: 1px solid rgba(148, 163, 184, 0.16);
       }
       .editor {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
         gap: 8px;
         margin-top: 16px;
+      }
+      /* For rows that hold only action buttons (not form fields): natural button widths
+         instead of being stretched across .editor's form-field grid tracks, a wider gap so
+         adjacent buttons don't crowd each other, and margin on both sides so the row doesn't
+         sit flush against whatever's above/below it. */
+      .action-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 14px;
+        margin: 26px 0;
+        padding-bottom: 22px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.12);
       }
       .editor select, .editor input {
         width: 100%;
@@ -289,6 +423,7 @@
         justify-content: space-between;
         flex-wrap: wrap;
         gap: 10px;
+        margin-bottom: 10px;
       }
       .workspace-toolbar h3 { margin: 0; }
       .toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -302,10 +437,14 @@
       .chart-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+        grid-auto-rows: min-content;
         gap: 16px;
-        margin-top: 14px;
+        margin-top: 26px;
         align-items: start;
+        min-width: 0;
+        width: 100%;
       }
+      .chart-grid > * { min-width: 0; }
 
       /* ---- Workspace card: shared box for both chart cards and dataset-editor cards, so the
          two card types are always identically sized and share one visual language. A thin top
@@ -314,6 +453,11 @@
         --card-accent: var(--accent);
         position: relative;
         min-width: 0;
+        max-width: 100%;
+        /* Hard containment boundary: nothing inside a card (in particular a Plotly SVG that
+           briefly renders at a stale/default size before its corrective resize pass runs) can
+           ever visually bleed into a neighboring card or grid cell. */
+        overflow: hidden;
         padding: 16px 16px 15px;
         border: 1px solid rgba(148, 163, 184, 0.16);
         border-radius: 14px;
@@ -443,7 +587,11 @@
         color: var(--text);
         font-size: 0.85rem;
       }
-      .chart-card .chart-area { position: relative; min-height: 380px; margin-top: 10px; }
+      .chart-card .chart-area { position: relative; min-height: 380px; min-width: 0; width: 100%; overflow: hidden; margin-top: 10px; }
+      .chart-card .chart-area .js-plotly-plot,
+      .chart-card .chart-area .plot-container {
+        width: 100% !important;
+      }
       /* Plotly's default modebar crowds badly at narrower widths; trim to essentials via JS
          config and give it explicit breathing room + contrast here. */
       .chart-area .modebar-container {
@@ -490,6 +638,8 @@
         font-size: 0.88rem;
         line-height: 1.55;
         color: var(--text);
+        overflow-wrap: break-word;
+        word-break: break-word;
       }
       .about-dataset-body a { color: var(--accent); }
       .column-meanings {
@@ -506,6 +656,94 @@
         border-top: 1px solid rgba(148, 163, 184, 0.12);
       }
       .column-meanings .row strong { color: var(--accent-2); }
+      .column-explorer-select-row {
+        margin: 14px 0 4px;
+      }
+      .column-explorer-select-row select {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid #475569;
+        background: #0b1220;
+        color: var(--text);
+        font-size: 0.92rem;
+        font-weight: 600;
+      }
+      .column-explorer-detail {
+        margin-top: 16px;
+      }
+      .ce-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .ce-name {
+        font-size: 1.08rem;
+        font-weight: 700;
+        overflow-wrap: break-word;
+        word-break: break-word;
+      }
+      .ce-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+      .ce-stat {
+        background: rgba(15, 118, 110, 0.14);
+        border: 1px solid rgba(52, 211, 153, 0.3);
+        border-radius: 9px;
+        padding: 9px 10px;
+      }
+      .ce-stat .label {
+        font-size: 0.68rem;
+        color: var(--muted);
+        display: block;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .ce-stat .value {
+        font-size: 1.05rem;
+        font-weight: 700;
+        margin-top: 3px;
+        display: block;
+        overflow-wrap: anywhere;
+      }
+      .ce-description h4 {
+        margin: 0 0 6px;
+        font-size: 0.9rem;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .ce-description p {
+        margin: 0;
+        font-size: 0.92rem;
+        line-height: 1.6;
+        overflow-wrap: break-word;
+      }
+      .ce-no-desc {
+        color: var(--muted);
+        font-style: italic;
+      }
+      .ce-inferred-tag {
+        display: inline-block;
+        font-size: 0.68rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: #fcd34d;
+        background: rgba(251, 191, 36, 0.12);
+        border: 1px solid rgba(251, 191, 36, 0.3);
+        border-radius: 6px;
+        padding: 3px 8px;
+        margin-bottom: 8px !important;
+      }
+      .type-badge.type-numeric { background: rgba(52, 211, 153, 0.16); color: #6ee7b7; border: 1px solid rgba(52, 211, 153, 0.35); }
+      .type-badge.type-categorical { background: rgba(56, 189, 248, 0.16); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.35); }
+      .type-badge.type-datetime { background: rgba(167, 139, 250, 0.16); color: #c4b5fd; border: 1px solid rgba(167, 139, 250, 0.35); }
+      .type-badge.type-boolean { background: rgba(251, 191, 36, 0.16); color: #fcd34d; border: 1px solid rgba(251, 191, 36, 0.35); }
       .modal-overlay {
         position: fixed;
         inset: 0;
@@ -605,6 +843,9 @@
         .grid {
           grid-template-columns: 1fr;
         }
+        .overview-row {
+          grid-template-columns: 1fr;
+        }
         aside.panel {
           position: static;
           max-height: none;
@@ -618,7 +859,27 @@
   <body>
     <div class="app">
       <div class="header">
-        <h1>Kaggle Dataset Analysis Workspace</h1>
+        <div class="brand">
+          <svg class="brand-mark" width="36" height="36" viewBox="0 0 34 34" fill="none">
+            <circle cx="17" cy="17" r="14.5" stroke="url(#logoGrad)" stroke-width="2.4"/>
+            <circle cx="17" cy="17" r="6.5" stroke="url(#logoGrad)" stroke-width="2.4"/>
+            <circle cx="17" cy="17" r="2" fill="url(#logoGrad)"/>
+            <line x1="17" y1="0.5" x2="17" y2="5.5" stroke="url(#logoGrad)" stroke-width="2.4" stroke-linecap="round"/>
+            <line x1="17" y1="28.5" x2="17" y2="33.5" stroke="url(#logoGrad)" stroke-width="2.4" stroke-linecap="round"/>
+            <line x1="0.5" y1="17" x2="5.5" y2="17" stroke="url(#logoGrad)" stroke-width="2.4" stroke-linecap="round"/>
+            <line x1="28.5" y1="17" x2="33.5" y2="17" stroke="url(#logoGrad)" stroke-width="2.4" stroke-linecap="round"/>
+            <defs>
+              <linearGradient id="logoGrad" x1="0" y1="0" x2="34" y2="34" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#818cf8"/>
+                <stop offset="100%" stop-color="#38bdf8"/>
+              </linearGradient>
+            </defs>
+          </svg>
+          <div class="brand-text">
+            <span class="brand-name">DataScopia</span>
+            <span class="brand-tagline">See what's really in your data</span>
+          </div>
+        </div>
         <div class="top-controls">
           <button class="btn secondary" id="load-demo-btn">Load Demo Data</button>
           <button class="btn" id="analyze-btn">Analyze current dataset</button>
@@ -662,41 +923,58 @@
           </div>
         </aside>
 
-        <main class="panel">
-          <h2>Dataset overview</h2>
-          <div id="dataset-info">No dataset loaded yet.</div>
-          <details class="about-dataset" id="about-dataset" hidden>
-            <summary>About this dataset (from Kaggle)</summary>
-            <div class="about-dataset-body" id="about-dataset-body"></div>
-          </details>
-          <div id="sample-banner" class="insights" hidden></div>
-          <div class="editor">
-            <button class="btn secondary" id="full-analysis-btn" hidden>Run full analysis</button>
-            <button class="btn secondary" id="download-full-btn" hidden>Download full dataset</button>
-          </div>
+        <div class="main-column">
+        <div class="overview-row">
+          <section class="panel" id="overview-panel">
+            <h2>Dataset Overview</h2>
+            <div id="dataset-info">No dataset loaded yet.</div>
+            <details class="about-dataset" id="about-dataset" hidden>
+              <summary>About this dataset (from Kaggle)</summary>
+              <div class="about-dataset-body" id="about-dataset-body"></div>
+            </details>
+            <div id="sample-banner" class="insights" hidden></div>
+            <div class="action-row">
+              <button class="btn secondary" id="full-analysis-btn" hidden>Run full analysis</button>
+              <button class="btn secondary" id="download-full-btn" hidden>Download full dataset</button>
+            </div>
 
-          <div class="stats" id="stats-container"></div>
-          <div class="insights"><ul id="quality-list"></ul></div>
+            <div class="stats" id="stats-container"></div>
+            <div class="insights"><ul id="quality-list"></ul></div>
 
-          <div class="insights">
-            <h3>Research snapshot</h3>
-            <ul id="insights-list"></ul>
-            <h3>Research questions</h3>
-            <ul id="questions-list"></ul>
-          </div>
+            <div class="insights research-findings">
+              <h3>Research snapshot</h3>
+              <ul id="insights-list"></ul>
+              <h3>Research questions</h3>
+              <ul id="questions-list"></ul>
+            </div>
 
-          <div class="findings">
-            <h3>Ask about this dataset</h3>
-            <p class="hint">Get a direct, computed answer from the real data instead of a generic summary — e.g. "what percentage of X are above N?", "which category has the highest Y?", or "what correlates with Z?".</p>
-            <div class="search-box"><input id="question-input" placeholder="Ask a research question..." /><button class="btn secondary" id="question-btn">Run</button></div>
-            <div id="question-answer"></div>
-          </div>
+            <div class="findings">
+              <h3>Ask about this dataset</h3>
+              <p class="hint">Get a direct, computed answer from the real data instead of a generic summary — e.g. "what percentage of X are above N?", "which category has the highest Y?", or "what correlates with Z?".</p>
+              <div class="search-box"><input id="question-input" placeholder="Ask a research question..." /><button class="btn secondary" id="question-btn">Run</button></div>
+              <div id="question-answer"></div>
+            </div>
+          </section>
 
+          <section class="panel" id="column-explorer-panel">
+            <h2>Column Explorer</h2>
+            <p class="hint">Pick a column to see its data type, coverage, and what it represents.</p>
+            <div class="column-explorer-select-row">
+              <select id="column-explorer-select" disabled><option>No dataset loaded yet</option></select>
+            </div>
+            <div id="column-explorer-body">
+              <p class="hint">Load a dataset to explore its columns.</p>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel" id="workspace-panel">
+          <h2>Workspace</h2>
           <div class="recommendations" id="recommendations"></div>
 
           <div id="viz-section" hidden>
             <div class="workspace-toolbar">
-              <h3>Workspace</h3>
+              <h3>Charts &amp; Dataset Editors</h3>
               <div class="toolbar-actions">
                 <button class="btn secondary toolbar-btn" id="add-chart-btn">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -796,12 +1074,16 @@
               <div class="chart-area"></div>
             </div>
           </template>
-          <div class="editor"><button class="btn secondary" id="export-notebook-btn">Export notebook</button></div>
+          <div class="action-row">
+            <button class="btn secondary" id="export-notebook-btn">Export notebook</button>
+            <button class="btn secondary" id="export-report-btn">Export report (PDF)</button>
+          </div>
           <div class="findings" id="findings" hidden>
             <h3>Saved findings</h3>
             <ul id="findings-list"></ul>
           </div>
-        </main>
+        </section>
+        </div>
       </div>
     </div>
 
@@ -830,6 +1112,8 @@
       const insightsList = document.getElementById('insights-list');
       const questionsList = document.getElementById('questions-list');
       const qualityList = document.getElementById('quality-list');
+      const columnExplorerSelect = document.getElementById('column-explorer-select');
+      const columnExplorerBody = document.getElementById('column-explorer-body');
       const recommendationsEl = document.getElementById('recommendations');
       const vizSectionEl = document.getElementById('viz-section');
       const editorEl = document.getElementById('visualization-editor');
@@ -874,8 +1158,8 @@
       };
       const PLOTLY_LAYOUT_BASE = {
         margin: {t: 44, r: 20, l: 56, b: 46},
-        paper_bgcolor: '#0f172a',
-        plot_bgcolor: '#0f172a',
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
         font: {color: '#e5e7eb'},
         legend: {orientation: 'h', y: -0.2},
       };
@@ -1050,19 +1334,63 @@
                 };
               });
             } else {
-              traces = [{type: scatterType, mode: type === 'line' ? 'lines+markers' : (type === 'scatter' ? 'markers' : undefined), x: values, y: rows.map((row) => row[y]), fill: type === 'area' ? 'tozeroy' : undefined, name: `${x} vs ${y}`}];
+              // x/y must come from the same filtered row set: independently filtering x (to
+              // drop nulls) while leaving y unfiltered silently misaligns x[i]/y[i] the moment
+              // any row is missing an x value, scrambling the plotted relationship.
+              const pairedX = [];
+              const pairedY = [];
+              rows.forEach((row) => {
+                const xv = row[x];
+                const yv = row[y];
+                if (xv === null || xv === undefined || yv === null || yv === undefined) return;
+                pairedX.push(xv);
+                pairedY.push(yv);
+              });
+              traces = [{type: scatterType, mode: type === 'line' ? 'lines+markers' : (type === 'scatter' ? 'markers' : undefined), x: pairedX, y: pairedY, fill: type === 'area' ? 'tozeroy' : undefined, name: `${x} vs ${y}`}];
             }
             title = title || `${x} vs ${y}`;
           }
+        }
+
+        // Force a true linear (proportional) scale on any axis plotting a known-numeric column,
+        // rather than trusting Plotly's auto-detected axis type. Auto-detection can pick
+        // 'category' (equal spacing regardless of value) for low-cardinality numeric columns,
+        // which flattens or distorts the real shape of a relationship - most visible, and most
+        // damaging, on scatter/line/area plots where the whole point is reading that shape.
+        const axisLayout = {};
+        if (type === 'scatter' || type === 'line' || type === 'area') {
+          const numericCols = state.analysis.numeric_columns || [];
+          if (numericCols.includes(x)) axisLayout.xaxis = {type: 'linear'};
+          if (numericCols.includes(y)) axisLayout.yaxis = {type: 'linear'};
         }
 
         const shortTitle = title && title.length > 42 ? `${title.slice(0, 41)}…` : title;
         Plotly.react(
           slot.area,
           traces,
-          {...PLOTLY_LAYOUT_BASE, title: {text: shortTitle, x: 0.02, xanchor: 'left', font: {size: 14}}},
+          {...PLOTLY_LAYOUT_BASE, ...axisLayout, title: {text: shortTitle, x: 0.02, xanchor: 'left', font: {size: 14}}},
           PLOTLY_CONFIG
         );
+      }
+
+      // Plotly measures its container's width at the moment Plotly.react() runs. When several
+      // cards are created in the same grid back-to-back (e.g. rebuilding 2 charts + 1 dataset
+      // editor), the first one can be measured while it's still the grid's only item - full row
+      // width - before the later siblings arrive and the grid recomputes to a narrower per-item
+      // width. The result: the first card renders oversized and everything else gets pushed
+      // below it. This forces a corrective resize pass, deferred two animation frames so it
+      // runs strictly after the browser has finished laying out the *final* grid, whenever the
+      // grid's item count changes (chart/editor added, removed, or a full rebuild).
+      function resizeAllCharts() {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            chartSlots.forEach((slot) => {
+              if (slot.area && slot.area.data) {
+                try { Plotly.Plots.resize(slot.area); } catch (error) { /* not rendered yet */ }
+              }
+            });
+          });
+        });
       }
 
       function createChartSlot(label, fields, recommendation, savedConfig) {
@@ -1086,7 +1414,7 @@
           exportScale: node.querySelector('.chart-export-scale'),
           exportBtn: node.querySelector('.chart-export-btn'),
         };
-        const columnDescriptions = state.dataset?.column_descriptions || {};
+        const columnDescriptions = {...(state.dataset?.inferred_column_descriptions || {}), ...(state.dataset?.column_descriptions || {})};
         slot.type.innerHTML = chartTypes.map(([value, text]) => `<option value="${value}">${text}</option>`).join('');
         slot.x.innerHTML = fieldOptions(fields, false, 'None', columnDescriptions);
         slot.y.innerHTML = fieldOptions(fields, true, 'None', columnDescriptions);
@@ -1110,6 +1438,7 @@
         slot.removeBtn.addEventListener('click', () => {
           node.remove();
           chartSlots = chartSlots.filter((s) => s !== slot);
+          resizeAllCharts();
         });
         slot.exportBtn.addEventListener('click', () => exportChart(slot));
         renderChart(slot);
@@ -1155,11 +1484,12 @@
         chartSlots = [];
         if (savedConfigs && savedConfigs.length) {
           savedConfigs.forEach((cfg, index) => createChartSlot(cfg.label || `Chart ${index + 1}`, fields, null, cfg));
-          return;
+        } else {
+          // Standard setup: 2 chart editors by default. Use "+ Add chart" for more.
+          const labels = ['Primary relationship', 'Distribution or categories'];
+          labels.forEach((label, index) => createChartSlot(label, fields, recommendations[index]));
         }
-        // Standard setup: 2 chart editors by default. Use "+ Add chart" for more.
-        const labels = ['Primary relationship', 'Distribution or categories'];
-        labels.forEach((label, index) => createChartSlot(label, fields, recommendations[index]));
+        resizeAllCharts();
       }
 
       // ---- Dataset editors: filter/clean/transform the full server-side sample ----
@@ -1322,6 +1652,7 @@
         slot.removeBtn.addEventListener('click', () => {
           node.remove();
           datasetEditorSlots = datasetEditorSlots.filter((s) => s !== slot);
+          resizeAllCharts();
         });
         datasetEditorSlots.push(slot);
         return slot;
@@ -1332,6 +1663,7 @@
         datasetEditorSlots.forEach((slot) => slot.card.remove());
         datasetEditorSlots = [];
         createDatasetEditorSlot('Dataset editor 1');
+        resizeAllCharts();
       }
 
       function renderImpact(slot, beforeRows, afterRows) {
@@ -1442,7 +1774,7 @@
       }
 
       function refreshChartFieldOptions(slot, fields) {
-        const columnDescriptions = state.dataset?.column_descriptions || {};
+        const columnDescriptions = {...(state.dataset?.inferred_column_descriptions || {}), ...(state.dataset?.column_descriptions || {})};
         const keepX = fields.includes(slot.x.value) ? slot.x.value : (fields[0] || '');
         const keepY = fields.includes(slot.y.value) ? slot.y.value : '';
         const keepGroup = fields.includes(slot.group.value) ? slot.group.value : '';
@@ -1478,6 +1810,83 @@
           });
         }
       }
+
+      const TYPE_LABELS = {numeric: 'Numeric', categorical: 'Categorical', datetime: 'Datetime', boolean: 'Boolean'};
+
+      function renderColumnExplorer() {
+        const columns = state.analysis?.columns || [];
+        if (!columns.length) {
+          columnExplorerSelect.disabled = true;
+          columnExplorerSelect.innerHTML = '<option>No dataset loaded yet</option>';
+          columnExplorerBody.innerHTML = '<p class="hint">Load a dataset to explore its columns.</p>';
+          return;
+        }
+        const previousValue = columnExplorerSelect.value;
+        const columnDescriptions = state.dataset?.column_descriptions || {};
+        columnExplorerSelect.disabled = false;
+        columnExplorerSelect.innerHTML = columns
+          .map((col) => `<option value="${escapeHtml(col.name)}">${escapeHtml(col.name)}${columnDescriptions[col.name] ? ' ✓' : ''}</option>`)
+          .join('');
+        const stillValid = columns.some((col) => col.name === previousValue);
+        columnExplorerSelect.value = stillValid ? previousValue : columns[0].name;
+        renderColumnExplorerDetail(columnExplorerSelect.value);
+      }
+
+      function renderColumnExplorerDetail(columnName) {
+        const columns = state.analysis?.columns || [];
+        const meta = columns.find((col) => col.name === columnName);
+        if (!meta) {
+          columnExplorerBody.innerHTML = '<p class="hint">Column not found.</p>';
+          return;
+        }
+        const columnDescriptions = state.dataset?.column_descriptions || {};
+        const inferredDescriptions = state.dataset?.inferred_column_descriptions || {};
+        const documented = columnDescriptions[columnName];
+        const inferred = inferredDescriptions[columnName];
+        const numericSummary = state.analysis?.numeric_summary?.[columnName];
+        const typeLabel = TYPE_LABELS[meta.type] || meta.type;
+
+        const statCards = [
+          `<div class="ce-stat"><span class="label">Missing</span><span class="value">${meta.missing_pct}%</span></div>`,
+          `<div class="ce-stat"><span class="label">Unique values</span><span class="value">${meta.unique_count.toLocaleString()}</span></div>`,
+        ];
+        if (numericSummary) {
+          statCards.push(
+            `<div class="ce-stat"><span class="label">Mean</span><span class="value">${numericSummary.mean}</span></div>`,
+            `<div class="ce-stat"><span class="label">Median</span><span class="value">${numericSummary.median}</span></div>`,
+            `<div class="ce-stat"><span class="label">Min</span><span class="value">${numericSummary.min}</span></div>`,
+            `<div class="ce-stat"><span class="label">Max</span><span class="value">${numericSummary.max}</span></div>`,
+          );
+        }
+
+        let descriptionHtml;
+        if (documented) {
+          descriptionHtml = `<p>${boldify(escapeHtml(documented))}</p>`;
+        } else if (inferred) {
+          descriptionHtml = `
+            <p class="ce-inferred-tag">Approximate — inferred from the column name, not from the dataset's documentation</p>
+            <p>${boldify(escapeHtml(inferred))}</p>
+          `;
+        } else {
+          descriptionHtml = `<p class="ce-no-desc">No description could be determined for this column — its name and values are the best guide to what it represents.</p>`;
+        }
+
+        columnExplorerBody.innerHTML = `
+          <div class="column-explorer-detail">
+            <div class="ce-header">
+              <span class="ce-name">${escapeHtml(columnName)}</span>
+              <span class="type-badge type-${meta.type}">${escapeHtml(typeLabel)}</span>
+            </div>
+            <div class="ce-stats">${statCards.join('')}</div>
+            <div class="ce-description">
+              <h4>What this column represents</h4>
+              ${descriptionHtml}
+            </div>
+          </div>
+        `;
+      }
+
+      columnExplorerSelect.addEventListener('change', () => renderColumnExplorerDetail(columnExplorerSelect.value));
 
       function renderFindings() {
         findingsEl.hidden = state.findings.length === 0;
@@ -1709,21 +2118,15 @@
         `;
 
         const kaggleInfo = state.dataset?.kaggle_info;
-        const columnDescriptions = state.dataset?.column_descriptions || {};
         if (kaggleInfo && kaggleInfo.description) {
           aboutDatasetEl.hidden = false;
-          const meaningsRows = Object.entries(columnDescriptions)
-            .map(([col, desc]) => `<div class="row"><strong>${escapeHtml(col)}</strong><span>${escapeHtml(desc)}</span></div>`)
-            .join('');
-          const meaningsBlock = meaningsRows
-            ? `<div class="column-meanings"><strong>Column meanings (from the dataset description):</strong>${meaningsRows}</div>`
-            : '';
           const licenseLine = kaggleInfo.license ? `<p class="hint" style="margin-top: 10px;">License: ${escapeHtml(kaggleInfo.license)}</p>` : '';
-          aboutDatasetBodyEl.innerHTML = formatDescription(kaggleInfo.description) + meaningsBlock + licenseLine;
+          aboutDatasetBodyEl.innerHTML = formatDescription(kaggleInfo.description) + licenseLine;
         } else {
           aboutDatasetEl.hidden = true;
           aboutDatasetBodyEl.innerHTML = '';
         }
+        renderColumnExplorer();
 
         const sample = state.analysis.sample;
         if (sample && sample.is_sample) {
@@ -1783,12 +2186,15 @@
         const fields = Object.keys((state.analysis?.preview || [])[0] || {});
         if (!fields.length) return;
         createChartSlot(`Custom chart ${chartSlots.length + 1}`, fields);
+        resizeAllCharts();
       });
       addDatasetEditorBtn.addEventListener('click', () => {
         createDatasetEditorSlot(`Dataset editor ${datasetEditorSlots.length + 1}`);
+        resizeAllCharts();
       });
       resetTransformBtn.addEventListener('click', resetAllTransforms);
 
+      window.addEventListener('resize', resizeAllCharts);
       document.getElementById('search-btn').addEventListener('click', searchDatasets);
       uploadBtn.addEventListener('click', uploadDataset);
       fullAnalysisBtn.addEventListener('click', async () => {
@@ -1864,6 +2270,72 @@
         link.click();
         URL.revokeObjectURL(link.href);
       });
+
+      // Shareable report for non-Python readers: a server-generated PDF with real, dataset-
+      // specific statistical narrative (actual pearsonr correlation + significance tests,
+      // distribution/group-comparison analysis computed against the full cached dataframe) per
+      // chart, not a restated dump of the on-screen summary stats. The browser's job is only to
+      // capture chart images and hand configs + findings to the API, which does the real writing.
+      async function exportReportPDF() {
+        if (!state.analysis) return;
+        const btn = document.getElementById('export-report-btn');
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Generating report...';
+        try {
+          const charts = [];
+          for (const slot of chartSlots) {
+            if (!slot.area || !slot.area.data || !slot.x || !slot.x.value) continue;
+            const title = (slot.titleInput?.value || '').trim() || `${slot.x.value}${slot.y?.value ? ' vs ' + slot.y.value : ''}`;
+            let imageBase64 = null;
+            try {
+              const imgData = await Plotly.toImage(slot.area, {format: 'png', width: 820, height: 440});
+              imageBase64 = imgData.split(',')[1] || null;
+            } catch (error) {
+              // A chart that fails to rasterize just loses its image; the narrative still runs.
+            }
+            charts.push({
+              title,
+              type: slot.type.value,
+              x: slot.x.value,
+              y: slot.y.value,
+              agg: slot.agg.value,
+              group: slot.group.value,
+              image_base64: imageBase64,
+            });
+          }
+
+          const response = await fetch(`${API_BASE}/analysis/report`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              dataset_id: state.dataset?.dataset_id,
+              dataset_name: state.analysis.dataset_name || 'Dataset',
+              analysis: state.analysis,
+              dataset: {kaggle_info: state.dataset?.kaggle_info || null},
+              charts,
+              findings: state.findings,
+            }),
+          });
+          if (!response.ok) {
+            const errBody = await response.json().catch(() => ({}));
+            throw new Error(errBody.detail || `Report generation failed (${response.status}).`);
+          }
+          const blob = await response.blob();
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(blob);
+          link.download = `${(state.analysis.dataset_name || 'analysis').replace(/[^a-z0-9_-]+/gi, '_')}-report.pdf`;
+          link.click();
+          URL.revokeObjectURL(link.href);
+        } catch (error) {
+          alert(`Could not generate the PDF report: ${error.message || error}`);
+          console.error(error);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+      }
+      document.getElementById('export-report-btn').addEventListener('click', exportReportPDF);
       let lastQuestionResult = null;
       document.getElementById('question-btn').addEventListener('click', async () => {
         if (!state.analysis || !questionInput.value.trim()) return;

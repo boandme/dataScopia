@@ -26,11 +26,12 @@ for path in (ANALYSIS_SRC, DATASET_SRC, APP_DIR):
 import pandas as pd
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from analysis.profiler import analyze_dataframe
 from analysis.notebook_export import build_notebook
 from analysis.qa_engine import answer_question
+from analysis.report import build_report_pdf
 from analysis.transforms import apply_transform, TransformError
 from dataset.kaggle_search import (
     download_kaggle_dataset,
@@ -38,12 +39,12 @@ from dataset.kaggle_search import (
     kaggle_credential_status,
     search_kaggle_datasets,
 )
-from dataset.descriptions import extract_column_descriptions
+from dataset.descriptions import extract_column_descriptions, infer_column_description
 from dataset.loader import load_dataset, load_dataframe_from_bytes
 from dataset.streaming import DEFAULT_SAMPLE_BYTES, load_dataset_sample
 import workspace_cache
 
-app = FastAPI(title=os.getenv("APP_TITLE", "Kaggle Dataset Analysis Workspace"))
+app = FastAPI(title=os.getenv("APP_TITLE", "DataScopia"))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -62,16 +63,28 @@ def _serializable_dataset(dataset: dict[str, object]) -> dict[str, object]:
     return {key: value for key, value in dataset.items() if key not in {"dataframe", "path"}}
 
 
+def _attach_column_descriptions(dataset: dict[str, object], df: pd.DataFrame, documented: dict[str, str] | None = None) -> None:
+    """Attach both documented (from the dataset's own text, when available) and inferred
+    (deterministic, name-based heuristic) column descriptions, so the UI always has something to
+    show for every column without ever presenting a guess as if it were the author's own words."""
+    documented = documented or {}
+    dataset["column_descriptions"] = documented
+    dataset["inferred_column_descriptions"] = {
+        column: infer_column_description(column, df[column]) for column in df.columns if column not in documented
+    }
+
+
 def _attach_kaggle_description(dataset: dict[str, object], df: pd.DataFrame, slug: str) -> None:
     """Best-effort: fetch the dataset's Kaggle description and extract any column meanings the
-    author wrote into it. Never fails the request - a bad/missing description just means the UI
-    won't show one."""
+    author wrote into it, then fill in the rest with name-based inference. Never fails the
+    request - a bad/missing description just means fewer columns get a documented description."""
     try:
         info = get_dataset_description(slug)
     except Exception:
         info = {}
     dataset["kaggle_info"] = info
-    dataset["column_descriptions"] = extract_column_descriptions(info.get("description", ""), list(df.columns))
+    documented = extract_column_descriptions(info.get("description", ""), list(df.columns))
+    _attach_column_descriptions(dataset, df, documented)
 
 
 def _cache_dataset(dataset: dict[str, object], df: pd.DataFrame, dataset_id: str) -> None:
@@ -115,6 +128,7 @@ def load_dataset_from_path(payload: dict[str, str]) -> dict[str, object]:
         dataset = load_dataset(path)
         df = dataset["dataframe"]
         _cache_dataset(dataset, df, dataset_id=f"local-{dataset['name']}")
+        _attach_column_descriptions(dataset, df)
         analysis = _analysis_with_preview(df, dataset["name"])
         return {"dataset": _serializable_dataset(dataset), "analysis": analysis}
     except Exception as exc:  # pragma: no cover
@@ -211,6 +225,7 @@ async def upload_dataset(file: UploadFile = File(...)) -> dict[str, object]:
             "dataframe": df,
         }
         _cache_dataset(dataset, df, dataset_id=f"upload-{uuid.uuid4().hex[:10]}")
+        _attach_column_descriptions(dataset, df)
         analysis = _analysis_with_preview(df, name)
         return {"dataset": _serializable_dataset(dataset), "analysis": analysis}
     except Exception as exc:  # pragma: no cover
@@ -340,6 +355,59 @@ def answer_analysis_question(payload: dict[str, object]) -> dict[str, object]:
     }
 
 
+@app.post("/analysis/report")
+def export_analysis_report(payload: dict[str, object]) -> Response:
+    """Generate a professional, dataset-specific PDF research report server-side.
+
+    Unlike a client-side dump of the on-screen summary stats, every narrative paragraph here is
+    computed fresh against the full cached dataframe (real scipy correlation/significance tests,
+    distribution shape, group comparisons) so the report's claims about significance and
+    correlation are genuine rather than restated UI copy.
+    """
+    dataset_id = payload.get("dataset_id")
+    dataset_name = str(payload.get("dataset_name") or "Dataset")
+    analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
+    charts = payload.get("charts") if isinstance(payload.get("charts"), list) else []
+    findings = payload.get("findings") if isinstance(payload.get("findings"), list) else []
+
+    df = workspace_cache.get(str(dataset_id)) if dataset_id else None
+    if df is None:
+        preview = analysis.get("preview")
+        if preview:
+            df = pd.DataFrame(preview)
+
+    if df is None or df.empty:
+        raise HTTPException(
+            status_code=400,
+            detail="No dataset data is available to build a report. Analyze a dataset first.",
+        )
+
+    kaggle_description = None
+    dataset_payload = payload.get("dataset") if isinstance(payload.get("dataset"), dict) else {}
+    kaggle_info = dataset_payload.get("kaggle_info") if isinstance(dataset_payload.get("kaggle_info"), dict) else {}
+    if kaggle_info.get("description"):
+        kaggle_description = str(kaggle_info["description"])
+
+    try:
+        pdf_bytes = build_report_pdf(
+            dataset_name=dataset_name,
+            df=df,
+            analysis=analysis,
+            kaggle_description=kaggle_description,
+            charts=charts,
+            findings=findings,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not generate the report: {exc}") from exc
+
+    filename = f"{dataset_name.replace(' ', '_').replace('/', '-')}_report.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/datasets/demo")
 def demo_dataset() -> dict[str, object]:
     df = pd.DataFrame(
@@ -352,12 +420,14 @@ def demo_dataset() -> dict[str, object]:
         }
     )
     workspace_cache.put("demo", df)
+    dataset: dict[str, object] = {"name": "demo_dataset", "dataset_id": "demo", "shape": {"rows": len(df), "columns": len(df.columns)}}
+    _attach_column_descriptions(dataset, df)
     return {
-        "dataset": {"name": "demo_dataset", "dataset_id": "demo", "shape": {"rows": len(df), "columns": len(df.columns)}},
+        "dataset": dataset,
         "analysis": analyze_dataframe(df, dataset_name="demo_dataset"),
     }
 
 
 @app.get("/")
 def root() -> dict[str, str]:
-    return {"message": "Kaggle Dataset Analysis Workspace API"}
+    return {"message": "DataScopia API"}

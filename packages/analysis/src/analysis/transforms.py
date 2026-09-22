@@ -16,7 +16,22 @@ def _get_column(df: pd.DataFrame, name: str) -> str:
     return name
 
 
+_TRUE_STRINGS = {"true", "1", "yes", "y"}
+_FALSE_STRINGS = {"false", "0", "no", "n"}
+
+
 def _parse_value(series: pd.Series, raw: Any) -> Any:
+    # Must come before is_numeric_dtype: pandas treats bool as numeric, so a boolean column
+    # would otherwise fall into the float() branch and reject valid values like "True"/"False".
+    if pd.api.types.is_bool_dtype(series):
+        if isinstance(raw, bool):
+            return raw
+        normalized = str(raw).strip().lower()
+        if normalized in _TRUE_STRINGS:
+            return True
+        if normalized in _FALSE_STRINGS:
+            return False
+        raise TransformError(f"'{raw}' is not a valid true/false value for this column.") from None
     if pd.api.types.is_numeric_dtype(series):
         try:
             return float(raw)
@@ -101,6 +116,12 @@ def op_fill_missing(df: pd.DataFrame, params: dict[str, Any]) -> tuple[pd.DataFr
 def op_drop_outliers(df: pd.DataFrame, params: dict[str, Any]) -> tuple[pd.DataFrame, str]:
     column = _get_column(df, params.get("column", ""))
     series = df[column]
+    # Must come before is_numeric_dtype: pandas treats bool as numeric, so a boolean column
+    # would otherwise reach the IQR math below, where `q1 - 1.5 * iqr` on boolean quantile
+    # results raises "numpy boolean subtract... not supported" - and a 2-value column has no
+    # meaningful notion of an IQR outlier anyway.
+    if pd.api.types.is_bool_dtype(series):
+        raise TransformError(f"'{column}' is a true/false column; the IQR outlier rule doesn't apply.")
     if not pd.api.types.is_numeric_dtype(series):
         raise TransformError(f"'{column}' isn't numeric; the IQR outlier rule doesn't apply.")
     non_null = series.dropna()

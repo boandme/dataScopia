@@ -1,4 +1,6 @@
-# Kaggle Dataset Analysis & AI Research Workspace
+# DataScopia
+
+*A Kaggle Dataset Analysis & AI Research Workspace.*
 
 ## Run the API
 
