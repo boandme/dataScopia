@@ -283,37 +283,153 @@
         border-color: var(--accent);
         box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
       }
+      .workspace-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .workspace-toolbar h3 { margin: 0; }
+      .toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      .toolbar-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 14px;
+        font-size: 0.83rem;
+      }
       .chart-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
-        gap: 14px;
-        margin-top: 16px;
+        gap: 16px;
+        margin-top: 14px;
+        align-items: start;
       }
+
+      /* ---- Workspace card: shared box for both chart cards and dataset-editor cards, so the
+         two card types are always identically sized and share one visual language. A thin top
+         accent stripe (color set per card type) is the only structural differentiator. ---- */
       .chart-card {
+        --card-accent: var(--accent);
+        position: relative;
         min-width: 0;
-        padding: 12px;
-        border: 1px solid rgba(148, 163, 184, 0.2);
-        border-radius: 10px;
-        background: rgba(15, 23, 42, 0.55);
+        padding: 16px 16px 15px;
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.6);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+        transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
       }
-      .chart-card h4 { margin: 0 0 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .chart-card::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 3px;
+        border-radius: 14px 14px 0 0;
+        background: var(--card-accent);
+      }
+      .chart-card:hover {
+        border-color: rgba(148, 163, 184, 0.3);
+        box-shadow: 0 10px 26px rgba(0, 0, 0, 0.3);
+        transform: translateY(-2px);
+      }
+      .dataset-editor-card { --card-accent: #a78bfa; }
+
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .card-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 700;
+        font-size: 0.92rem;
+        color: var(--text);
+        min-width: 0;
+      }
+      .card-title .chart-card-label, .card-title .dataset-editor-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .card-title .type-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        background: var(--card-accent);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--card-accent) 25%, transparent);
+      }
+      .card-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+      .icon-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        border-radius: 8px;
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        background: rgba(15, 23, 42, 0.5);
+        color: var(--muted);
+        cursor: pointer;
+        transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+      }
+      .icon-btn:hover { color: var(--text); background: rgba(148, 163, 184, 0.14); }
+      .icon-btn:active { transform: scale(0.92); }
+      .icon-btn.primary:hover { color: #6ee7b7; background: rgba(52, 211, 153, 0.14); border-color: rgba(52, 211, 153, 0.4); }
+      .icon-btn.danger:hover { color: #fca5a5; background: rgba(248, 113, 113, 0.14); border-color: rgba(248, 113, 113, 0.4); }
+
+      .type-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 9px;
+        border-radius: 999px;
+        font-size: 0.65rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        flex-shrink: 0;
+      }
+      .type-badge.cat-filter { background: rgba(56, 189, 248, 0.16); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.35); }
+      .type-badge.cat-clean { background: rgba(52, 211, 153, 0.16); color: #6ee7b7; border: 1px solid rgba(52, 211, 153, 0.35); }
+      .type-badge.cat-transform { background: rgba(167, 139, 250, 0.16); color: #c4b5fd; border: 1px solid rgba(167, 139, 250, 0.35); }
+
       .chart-card .editor.chart-basic {
         grid-template-columns: repeat(3, 1fr);
       }
       .chart-advanced {
-        margin-top: 8px;
+        margin-top: 10px;
       }
       .chart-advanced summary {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
         cursor: pointer;
+        padding: 5px 11px;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.08);
+        border: 1px solid rgba(148, 163, 184, 0.18);
         color: var(--muted);
-        font-size: 0.82rem;
+        font-size: 0.78rem;
         user-select: none;
         list-style: none;
+        transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
       }
       .chart-advanced summary::-webkit-details-marker { display: none; }
-      .chart-advanced summary::before { content: '▸ '; }
-      .chart-advanced[open] summary::before { content: '▾ '; }
-      .chart-advanced[open] summary { color: var(--text); margin-bottom: 8px; }
+      .chart-advanced summary::after { content: '\25BE'; font-size: 0.7rem; transition: transform 0.15s ease; }
+      .chart-advanced[open] summary::after { transform: rotate(180deg); }
+      .chart-advanced[open] summary {
+        background: rgba(56, 189, 248, 0.14);
+        color: var(--accent);
+        border-color: rgba(56, 189, 248, 0.4);
+      }
       .chart-advanced .editor {
         grid-template-columns: repeat(3, 1fr);
       }
@@ -390,6 +506,101 @@
         border-top: 1px solid rgba(148, 163, 184, 0.12);
       }
       .column-meanings .row strong { color: var(--accent-2); }
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(2, 8, 23, 0.72);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 50;
+        padding: 16px;
+      }
+      /* A class that sets its own `display` always beats the browser's default
+         [hidden] { display: none } rule when specificity ties (author styles win over the
+         user-agent stylesheet regardless of source order) — without this, the modal ignored
+         its `hidden` attribute and rendered open immediately on page load. */
+      .modal-overlay[hidden] {
+        display: none;
+      }
+      .modal-box {
+        background: var(--panel);
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        border-radius: 12px;
+        padding: 20px;
+        width: 100%;
+        max-width: 420px;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+      }
+      .modal-box h3 { margin-top: 0; }
+      .modal-box input[type="text"] {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid #475569;
+        background: #0b1220;
+        color: var(--text);
+      }
+      .past-analysis-item {
+        background: rgba(30, 41, 59, 0.8);
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 12px;
+        transition: border-color 0.15s ease;
+      }
+      .past-analysis-item:hover { border-color: rgba(56, 189, 248, 0.45); }
+      .past-analysis-item .meta { font-size: 0.78rem; color: var(--muted); margin: 4px 0 8px; }
+      .de-fields {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 8px;
+      }
+      .de-fields label {
+        display: block;
+        margin-top: 10px;
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+      .de-fields label > select, .de-fields label > input {
+        display: block;
+        width: 100%;
+        margin-top: 4px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid #475569;
+        background: #0b1220;
+        color: var(--text);
+      }
+      .de-result {
+        margin-top: 10px;
+        font-size: 0.82rem;
+        min-height: 1.2em;
+      }
+      .de-impact {
+        margin-top: 10px;
+      }
+      .impact-bar {
+        height: 6px;
+        border-radius: 4px;
+        background: rgba(148, 163, 184, 0.15);
+        overflow: hidden;
+      }
+      .impact-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #a78bfa, #38bdf8);
+        transition: width 0.4s ease;
+      }
+      .impact-meta {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.74rem;
+        color: var(--muted);
+        margin-top: 5px;
+      }
+      .card-small-btn {
+        padding: 4px 9px !important;
+        font-size: 0.78rem !important;
+      }
       @media (max-width: 980px) {
         .grid {
           grid-template-columns: 1fr;
@@ -411,6 +622,25 @@
         <div class="top-controls">
           <button class="btn secondary" id="load-demo-btn">Load Demo Data</button>
           <button class="btn" id="analyze-btn">Analyze current dataset</button>
+          <button class="btn secondary" id="save-analysis-btn" hidden>Save analysis</button>
+          <button class="btn secondary" id="past-analyses-btn">Past analyses</button>
+        </div>
+      </div>
+
+      <div class="panel" id="past-analyses-panel" hidden>
+        <h2>Past analyses</h2>
+        <p class="hint">Saved to this browser only (localStorage) — not the server. Clearing browser data will remove these.</p>
+        <div id="past-analyses-list" class="results"></div>
+      </div>
+
+      <div class="modal-overlay" id="save-name-overlay" hidden>
+        <div class="modal-box">
+          <h3>Name this analysis</h3>
+          <input type="text" id="save-name-input" placeholder="e.g. Titanic survival factors" maxlength="80" />
+          <div class="editor" style="margin-top: 12px;">
+            <button class="btn secondary" id="save-name-cancel-btn" type="button">Cancel</button>
+            <button class="btn" id="save-name-confirm-btn" type="button">Save</button>
+          </div>
         </div>
       </div>
 
@@ -465,25 +695,103 @@
           <div class="recommendations" id="recommendations"></div>
 
           <div id="viz-section" hidden>
-            <div class="editor"><button class="btn secondary" id="add-chart-btn">+ Add chart</button></div>
+            <div class="workspace-toolbar">
+              <h3>Workspace</h3>
+              <div class="toolbar-actions">
+                <button class="btn secondary toolbar-btn" id="add-chart-btn">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  Add chart
+                </button>
+                <button class="btn secondary toolbar-btn" id="add-dataset-editor-btn">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  Add dataset editor
+                </button>
+                <button class="btn secondary toolbar-btn" id="reset-transforms-btn" hidden>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+                  Reset to original data
+                </button>
+              </div>
+            </div>
+            <p class="hint">Charts read the analyzed sample. Dataset editors filter, clean, or transform the full server-side sample and everything below — charts, findings, questions — reflects the result immediately.</p>
+            <ul id="transform-log" class="insights" hidden></ul>
             <div class="chart-grid" id="visualization-editor"></div>
           </div>
+
+          <template id="dataset-editor-template">
+            <div class="chart-card dataset-editor-card">
+              <div class="card-header">
+                <span class="card-title">
+                  <span class="type-badge de-type-badge">Filter</span>
+                  <span class="dataset-editor-label">Dataset editor</span>
+                </span>
+                <span class="card-actions">
+                  <button type="button" class="icon-btn danger de-remove-btn" title="Remove this editor">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                  </button>
+                </span>
+              </div>
+              <div class="editor">
+                <label>Operation<select class="de-op-type"></select></label>
+              </div>
+              <div class="de-fields"></div>
+              <div class="editor" style="margin-top: 10px;">
+                <button type="button" class="btn de-apply-btn">Apply</button>
+              </div>
+              <div class="de-result"></div>
+              <div class="de-impact" hidden></div>
+            </div>
+          </template>
+
           <template id="chart-card-template">
             <div class="chart-card">
-              <h4><span class="chart-card-label"></span><button type="button" class="btn secondary chart-save-btn" style="padding: 4px 10px; font-size: 0.78rem;">Save finding</button></h4>
+              <div class="card-header">
+                <span class="card-title">
+                  <span class="type-dot"></span>
+                  <span class="chart-card-label"></span>
+                </span>
+                <span class="card-actions">
+                  <button type="button" class="icon-btn primary chart-save-btn" title="Save as finding">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>
+                  </button>
+                  <button type="button" class="icon-btn danger chart-remove-btn" title="Remove this chart">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                  </button>
+                </span>
+              </div>
               <div class="editor chart-basic">
                 <label>Type<select class="chart-type"></select></label>
                 <label>X field<select class="chart-x"></select></label>
                 <label>Y field<select class="chart-y"></select></label>
               </div>
               <details class="chart-advanced">
-                <summary>More options (aggregate, group, sort, title)</summary>
+                <summary>More options</summary>
                 <div class="editor">
                   <label>Aggregate<select class="chart-agg"></select></label>
                   <label>Group by<select class="chart-group"></select></label>
                   <label>Sort<select class="chart-sort"></select></label>
                 </div>
                 <input class="chart-title-input" type="text" placeholder="Custom chart title (optional)" />
+                <div class="editor" style="margin-top: 8px;">
+                  <label>Export format
+                    <select class="chart-export-format">
+                      <option value="png">PNG</option>
+                      <option value="svg">SVG</option>
+                      <option value="jpeg">JPEG</option>
+                      <option value="webp">WebP</option>
+                    </select>
+                  </label>
+                  <label>Scale
+                    <select class="chart-export-scale">
+                      <option value="1">1x</option>
+                      <option value="2" selected>2x</option>
+                      <option value="3">3x</option>
+                    </select>
+                  </label>
+                  <button type="button" class="btn secondary chart-export-btn" style="align-self: end;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px; vertical-align: -2px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Export chart
+                  </button>
+                </div>
               </details>
               <div class="chart-area"></div>
             </div>
@@ -504,6 +812,7 @@
         analysis: null,
         slug: null,
         findings: [],
+        transformLog: [],
       };
 
       const searchInput = document.getElementById('search-input');
@@ -530,7 +839,18 @@
       const findingsListEl = document.getElementById('findings-list');
       const questionInput = document.getElementById('question-input');
       const questionAnswer = document.getElementById('question-answer');
+      const datasetEditorTemplate = document.getElementById('dataset-editor-template');
+      const addDatasetEditorBtn = document.getElementById('add-dataset-editor-btn');
+      const resetTransformBtn = document.getElementById('reset-transforms-btn');
+      const transformLogEl = document.getElementById('transform-log');
+      const saveAnalysisBtn = document.getElementById('save-analysis-btn');
+      const pastAnalysesBtn = document.getElementById('past-analyses-btn');
+      const pastAnalysesPanel = document.getElementById('past-analyses-panel');
+      const pastAnalysesListEl = document.getElementById('past-analyses-list');
+      const saveNameOverlay = document.getElementById('save-name-overlay');
+      const saveNameInput = document.getElementById('save-name-input');
       let chartSlots = [];
+      let datasetEditorSlots = [];
 
       const chartTypes = [
         ['histogram', 'Histogram'], ['scatter', 'Scatter'], ['bar', 'Bar'],
@@ -745,12 +1065,13 @@
         );
       }
 
-      function createChartSlot(label, fields, recommendation) {
+      function createChartSlot(label, fields, recommendation, savedConfig) {
         const node = chartTemplate.content.firstElementChild.cloneNode(true);
         node.querySelector('.chart-card-label').textContent = label;
         editorEl.appendChild(node);
         const slot = {
           card: node,
+          label,
           type: node.querySelector('.chart-type'),
           x: node.querySelector('.chart-x'),
           y: node.querySelector('.chart-y'),
@@ -760,6 +1081,10 @@
           titleInput: node.querySelector('.chart-title-input'),
           area: node.querySelector('.chart-area'),
           saveBtn: node.querySelector('.chart-save-btn'),
+          removeBtn: node.querySelector('.chart-remove-btn'),
+          exportFormat: node.querySelector('.chart-export-format'),
+          exportScale: node.querySelector('.chart-export-scale'),
+          exportBtn: node.querySelector('.chart-export-btn'),
         };
         const columnDescriptions = state.dataset?.column_descriptions || {};
         slot.type.innerHTML = chartTypes.map(([value, text]) => `<option value="${value}">${text}</option>`).join('');
@@ -769,19 +1094,38 @@
         slot.group.innerHTML = fieldOptions(fields, true, 'No grouping', columnDescriptions);
         slot.sort.innerHTML = sortOptions.map(([value, text]) => `<option value="${value}">${text}</option>`).join('');
 
-        slot.type.value = chartTypes.some(([value]) => value === recommendation?.type) ? recommendation.type : 'histogram';
-        slot.x.value = recommendation?.x || fields[0] || '';
-        slot.y.value = recommendation?.y || fields[1] || fields[0] || '';
-        slot.agg.value = 'none';
-        slot.group.value = '';
-        slot.sort.value = 'none';
+        const cfg = savedConfig || {};
+        slot.type.value = chartTypes.some(([value]) => value === (cfg.type || recommendation?.type))
+          ? (cfg.type || recommendation.type) : 'histogram';
+        slot.x.value = cfg.x || recommendation?.x || fields[0] || '';
+        slot.y.value = cfg.y || recommendation?.y || fields[1] || fields[0] || '';
+        slot.agg.value = cfg.agg || 'none';
+        slot.group.value = cfg.group || '';
+        slot.sort.value = cfg.sort || 'none';
+        slot.titleInput.value = cfg.customTitle || '';
 
         [slot.type, slot.x, slot.y, slot.agg, slot.group, slot.sort].forEach((control) => control.addEventListener('change', () => renderChart(slot)));
         slot.titleInput.addEventListener('input', () => renderChart(slot));
         slot.saveBtn.addEventListener('click', () => saveChartFinding(slot, label));
+        slot.removeBtn.addEventListener('click', () => {
+          node.remove();
+          chartSlots = chartSlots.filter((s) => s !== slot);
+        });
+        slot.exportBtn.addEventListener('click', () => exportChart(slot));
         renderChart(slot);
         chartSlots.push(slot);
         return slot;
+      }
+
+      function exportChart(slot) {
+        if (typeof Plotly === 'undefined' || !slot.area || !slot.area.data) return;
+        const format = slot.exportFormat.value || 'png';
+        const scale = Number(slot.exportScale.value) || 2;
+        const filename = `${(state.analysis?.dataset_name || 'chart').replace(/[^a-z0-9_-]+/gi, '_')}-${slot.x.value || 'chart'}`;
+        Plotly.downloadImage(slot.area, {format, filename, scale}).catch(() => {
+          slot.exportBtn.textContent = 'Export failed';
+          setTimeout(() => { slot.exportBtn.textContent = 'Export chart'; }, 1500);
+        });
       }
 
       function saveChartFinding(slot, label) {
@@ -806,11 +1150,308 @@
         setTimeout(() => { slot.saveBtn.textContent = original; }, 1200);
       }
 
-      function rebuildChartSlots(fields, recommendations) {
+      function rebuildChartSlots(fields, recommendations, savedConfigs) {
         editorEl.innerHTML = '';
         chartSlots = [];
-        const labels = ['Primary relationship', 'Distribution or categories', 'Quality and comparison'];
+        if (savedConfigs && savedConfigs.length) {
+          savedConfigs.forEach((cfg, index) => createChartSlot(cfg.label || `Chart ${index + 1}`, fields, null, cfg));
+          return;
+        }
+        // Standard setup: 2 chart editors by default. Use "+ Add chart" for more.
+        const labels = ['Primary relationship', 'Distribution or categories'];
         labels.forEach((label, index) => createChartSlot(label, fields, recommendations[index]));
+      }
+
+      // ---- Dataset editors: filter/clean/transform the full server-side sample ----
+
+      const CATEGORY_META = {
+        filter: {label: 'Filter', className: 'cat-filter'},
+        clean: {label: 'Clean', className: 'cat-clean'},
+        transform: {label: 'Transform', className: 'cat-transform'},
+      };
+
+      const TRANSFORM_OPS = [
+        {
+          type: 'filter', label: 'Filter rows', category: 'filter',
+          fields: [
+            {key: 'column', label: 'Column', kind: 'column'},
+            {key: 'comparator', label: 'Comparator', kind: 'select', options: [['>', '>'], ['>=', '>='], ['<', '<'], ['<=', '<='], ['==', 'equals'], ['!=', 'not equals']]},
+            {key: 'value', label: 'Value', kind: 'text'},
+          ],
+        },
+        {
+          type: 'drop_missing', label: 'Drop rows with missing values', category: 'clean',
+          fields: [
+            {key: 'column', label: 'Column', kind: 'column', allowBlank: true, blankLabel: 'Any column'},
+          ],
+        },
+        {
+          type: 'fill_missing', label: 'Fill missing values', category: 'clean',
+          fields: [
+            {key: 'column', label: 'Column', kind: 'column'},
+            {key: 'strategy', label: 'Fill with', kind: 'select', options: [['mean', 'Mean'], ['median', 'Median'], ['mode', 'Mode'], ['constant', 'Constant value']]},
+            {key: 'constant_value', label: 'Constant value', kind: 'text', showIf: {strategy: 'constant'}},
+          ],
+        },
+        {
+          type: 'drop_outliers', label: 'Drop outliers (IQR rule)', category: 'clean',
+          fields: [{key: 'column', label: 'Numeric column', kind: 'column', numericOnly: true}],
+        },
+        {
+          type: 'rename_column', label: 'Rename column', category: 'transform',
+          fields: [
+            {key: 'column', label: 'Column', kind: 'column'},
+            {key: 'new_name', label: 'New name', kind: 'text'},
+          ],
+        },
+        {
+          type: 'cast_type', label: 'Change column type', category: 'transform',
+          fields: [
+            {key: 'column', label: 'Column', kind: 'column'},
+            {key: 'target_type', label: 'New type', kind: 'select', options: [['numeric', 'Numeric'], ['string', 'Text'], ['datetime', 'Date/time'], ['category', 'Category']]},
+          ],
+        },
+        {
+          type: 'drop_column', label: 'Drop column', category: 'transform',
+          fields: [{key: 'column', label: 'Column', kind: 'column'}],
+        },
+        {
+          type: 'combine_columns', label: 'Combine columns (merge)', category: 'transform',
+          fields: [
+            {key: 'columns', label: 'Columns (ctrl/cmd-click for multiple)', kind: 'multi-column'},
+            {key: 'operation', label: 'Combine using', kind: 'select', options: [['concat', 'Join as text'], ['sum', 'Sum'], ['mean', 'Average'], ['coalesce', 'First non-empty']]},
+            {key: 'separator', label: 'Separator', kind: 'text', default: ' ', showIf: {operation: 'concat'}},
+            {key: 'new_name', label: 'New column name', kind: 'text'},
+          ],
+        },
+      ];
+
+      function currentFieldNames() {
+        return Object.keys((state.analysis?.preview || [])[0] || {});
+      }
+
+      function buildTransformFields(slot) {
+        const opConfig = TRANSFORM_OPS.find((o) => o.type === slot.opType.value);
+        slot.fieldsEl.innerHTML = '';
+        slot.fieldInputs = {};
+        slot.fieldWrappers = {};
+        if (!opConfig) return;
+
+        const updateVisibility = () => {
+          opConfig.fields.forEach((fieldSpec) => {
+            if (!fieldSpec.showIf) return;
+            const [depKey, depVal] = Object.entries(fieldSpec.showIf)[0];
+            const depInput = slot.fieldInputs[depKey];
+            slot.fieldWrappers[fieldSpec.key].hidden = !(depInput && depInput.value === depVal);
+          });
+        };
+
+        opConfig.fields.forEach((fieldSpec) => {
+          const wrapper = document.createElement('label');
+          wrapper.textContent = fieldSpec.label;
+          let input;
+          if (fieldSpec.kind === 'column' || fieldSpec.kind === 'multi-column') {
+            const cols = fieldSpec.numericOnly ? (state.analysis?.numeric_columns || []) : currentFieldNames();
+            input = document.createElement('select');
+            if (fieldSpec.kind === 'multi-column') { input.multiple = true; input.size = Math.min(6, Math.max(2, cols.length)); }
+            input.innerHTML = (fieldSpec.allowBlank ? `<option value="">${fieldSpec.blankLabel || 'None'}</option>` : '') + cols.map((c) => `<option value="${c}">${c}</option>`).join('');
+          } else if (fieldSpec.kind === 'select') {
+            input = document.createElement('select');
+            input.innerHTML = fieldSpec.options.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+          } else {
+            input = document.createElement('input');
+            input.type = 'text';
+            if (fieldSpec.default) input.value = fieldSpec.default;
+          }
+          input.addEventListener('change', updateVisibility);
+          wrapper.appendChild(input);
+          slot.fieldsEl.appendChild(wrapper);
+          slot.fieldInputs[fieldSpec.key] = input;
+          slot.fieldWrappers[fieldSpec.key] = wrapper;
+        });
+        updateVisibility();
+      }
+
+      function refreshDatasetEditorFieldOptions(slot) {
+        const opConfig = TRANSFORM_OPS.find((o) => o.type === slot.opType.value);
+        if (!opConfig) return;
+        const fields = currentFieldNames();
+        opConfig.fields.forEach((fieldSpec) => {
+          const input = slot.fieldInputs[fieldSpec.key];
+          if (!input || (fieldSpec.kind !== 'column' && fieldSpec.kind !== 'multi-column')) return;
+          const cols = fieldSpec.numericOnly ? (state.analysis?.numeric_columns || []) : fields;
+          const prevSelected = fieldSpec.kind === 'multi-column'
+            ? [...input.selectedOptions].map((o) => o.value)
+            : [input.value];
+          input.innerHTML = (fieldSpec.allowBlank ? `<option value="">${fieldSpec.blankLabel || 'None'}</option>` : '') + cols.map((c) => `<option value="${c}">${c}</option>`).join('');
+          [...input.options].forEach((opt) => { if (prevSelected.includes(opt.value)) opt.selected = true; });
+        });
+      }
+
+      function updateEditorBadge(slot) {
+        const opConfig = TRANSFORM_OPS.find((o) => o.type === slot.opType.value);
+        const meta = CATEGORY_META[opConfig?.category] || CATEGORY_META.transform;
+        slot.badgeEl.className = `type-badge ${meta.className}`;
+        slot.badgeEl.textContent = meta.label;
+      }
+
+      function createDatasetEditorSlot(label) {
+        // Appended into the same grid as chart cards (not a separate container), so both card
+        // types are always identically sized and dataset editors naturally land below the
+        // charts already in the grid rather than in their own section above them.
+        const node = datasetEditorTemplate.content.firstElementChild.cloneNode(true);
+        node.querySelector('.dataset-editor-label').textContent = label;
+        editorEl.appendChild(node);
+        const slot = {
+          card: node,
+          opType: node.querySelector('.de-op-type'),
+          fieldsEl: node.querySelector('.de-fields'),
+          applyBtn: node.querySelector('.de-apply-btn'),
+          resultEl: node.querySelector('.de-result'),
+          removeBtn: node.querySelector('.de-remove-btn'),
+          badgeEl: node.querySelector('.de-type-badge'),
+          impactEl: node.querySelector('.de-impact'),
+          fieldInputs: {},
+          fieldWrappers: {},
+        };
+        slot.opType.innerHTML = TRANSFORM_OPS.map((o) => `<option value="${o.type}">${o.label}</option>`).join('');
+        slot.opType.addEventListener('change', () => { buildTransformFields(slot); updateEditorBadge(slot); });
+        buildTransformFields(slot);
+        updateEditorBadge(slot);
+        slot.applyBtn.addEventListener('click', () => applyDatasetTransform(slot));
+        slot.removeBtn.addEventListener('click', () => {
+          node.remove();
+          datasetEditorSlots = datasetEditorSlots.filter((s) => s !== slot);
+        });
+        datasetEditorSlots.push(slot);
+        return slot;
+      }
+
+      function resetDatasetEditorSlots() {
+        // Remove only the tracked dataset-editor cards, not the whole (shared) grid.
+        datasetEditorSlots.forEach((slot) => slot.card.remove());
+        datasetEditorSlots = [];
+        createDatasetEditorSlot('Dataset editor 1');
+      }
+
+      function renderImpact(slot, beforeRows, afterRows) {
+        if (typeof beforeRows !== 'number' || typeof afterRows !== 'number' || beforeRows <= 0) {
+          slot.impactEl.hidden = true;
+          return;
+        }
+        const removed = beforeRows - afterRows;
+        const pctKept = Math.max(0, Math.min(100, (afterRows / beforeRows) * 100));
+        slot.impactEl.hidden = false;
+        slot.impactEl.innerHTML = `
+          <div class="impact-bar"><div class="impact-bar-fill" style="width: ${pctKept}%;"></div></div>
+          <div class="impact-meta">
+            <span>${afterRows.toLocaleString()} of ${beforeRows.toLocaleString()} rows kept</span>
+            <span>${removed > 0 ? `−${removed.toLocaleString()} rows` : 'no rows removed'}</span>
+          </div>
+        `;
+      }
+
+      async function applyDatasetTransform(slot) {
+        if (!state.analysis || !state.dataset?.dataset_id) {
+          slot.resultEl.textContent = 'Load a dataset first.';
+          slot.resultEl.style.color = 'var(--danger)';
+          return;
+        }
+        const opConfig = TRANSFORM_OPS.find((o) => o.type === slot.opType.value);
+        if (!opConfig) return;
+        const params = {};
+        opConfig.fields.forEach((fieldSpec) => {
+          const input = slot.fieldInputs[fieldSpec.key];
+          if (!input) return;
+          params[fieldSpec.key] = fieldSpec.kind === 'multi-column'
+            ? [...input.selectedOptions].map((o) => o.value)
+            : input.value;
+        });
+
+        const beforeRows = state.analysis.research_snapshot?.rows ?? state.analysis.shape?.rows;
+
+        slot.applyBtn.disabled = true;
+        slot.applyBtn.textContent = 'Applying...';
+        slot.resultEl.textContent = '';
+        try {
+          const response = await fetch(`${API_BASE}/datasets/transform`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              dataset_id: state.dataset.dataset_id,
+              dataset_name: state.analysis.dataset_name,
+              type: opConfig.type,
+              params,
+            }),
+          });
+          const result = await response.json();
+          if (!response.ok) {
+            slot.resultEl.textContent = result.detail || 'Transform failed.';
+            slot.resultEl.style.color = 'var(--danger)';
+            return;
+          }
+          state.analysis = result.analysis;
+          state.transformLog.push(result.description);
+          slot.resultEl.textContent = `✓ ${result.description}`;
+          slot.resultEl.style.color = 'var(--accent-2)';
+          renderImpact(slot, beforeRows, result.shape?.rows);
+          resetTransformBtn.hidden = false;
+          datasetEditorSlots.forEach((s) => { if (s !== slot) refreshDatasetEditorFieldOptions(s); });
+          refreshDatasetEditorFieldOptions(slot);
+          renderTransformLog();
+          renderAnalysis({rebuildCharts: false});
+        } catch (error) {
+          slot.resultEl.textContent = 'Transform failed. Is the API server running?';
+          slot.resultEl.style.color = 'var(--danger)';
+        } finally {
+          slot.applyBtn.disabled = false;
+          slot.applyBtn.textContent = 'Apply';
+        }
+      }
+
+      function renderTransformLog() {
+        if (!state.transformLog.length) {
+          transformLogEl.hidden = true;
+          transformLogEl.innerHTML = '';
+          return;
+        }
+        transformLogEl.hidden = false;
+        transformLogEl.innerHTML = state.transformLog.map((line) => `<li>${escapeHtml(line)}</li>`).join('');
+      }
+
+      async function resetAllTransforms() {
+        if (!state.dataset?.dataset_id) return;
+        resetTransformBtn.disabled = true;
+        try {
+          const response = await fetch(`${API_BASE}/datasets/transform/reset`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({dataset_id: state.dataset.dataset_id, dataset_name: state.analysis?.dataset_name}),
+          });
+          const result = await response.json();
+          if (!response.ok) return;
+          state.analysis = result.analysis;
+          state.transformLog = [];
+          renderTransformLog();
+          resetTransformBtn.hidden = true;
+          datasetEditorSlots.forEach((s) => refreshDatasetEditorFieldOptions(s));
+          renderAnalysis({rebuildCharts: false});
+        } finally {
+          resetTransformBtn.disabled = false;
+        }
+      }
+
+      function refreshChartFieldOptions(slot, fields) {
+        const columnDescriptions = state.dataset?.column_descriptions || {};
+        const keepX = fields.includes(slot.x.value) ? slot.x.value : (fields[0] || '');
+        const keepY = fields.includes(slot.y.value) ? slot.y.value : '';
+        const keepGroup = fields.includes(slot.group.value) ? slot.group.value : '';
+        slot.x.innerHTML = fieldOptions(fields, false, 'None', columnDescriptions);
+        slot.y.innerHTML = fieldOptions(fields, true, 'None', columnDescriptions);
+        slot.group.innerHTML = fieldOptions(fields, true, 'No grouping', columnDescriptions);
+        slot.x.value = keepX;
+        slot.y.value = keepY;
+        slot.group.value = keepGroup;
       }
 
       function renderCappedList(el, items, cap, emptyMessage) {
@@ -846,6 +1487,107 @@
           }
           return `<li><strong>${finding.title}</strong><div style="color: var(--muted); font-size: 0.85rem;">${finding.summary || ''}</div></li>`;
         }).join('');
+      }
+
+      // ---- Past analyses: localStorage save/resume (server holds nothing beyond a session) ----
+
+      const SAVED_ANALYSES_KEY = 'kaggleWorkspace.savedAnalyses.v1';
+
+      function loadSavedAnalyses() {
+        try {
+          const raw = localStorage.getItem(SAVED_ANALYSES_KEY);
+          const parsed = raw ? JSON.parse(raw) : [];
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (error) {
+          return [];
+        }
+      }
+
+      function persistSavedAnalyses(list) {
+        try {
+          localStorage.setItem(SAVED_ANALYSES_KEY, JSON.stringify(list));
+          return true;
+        } catch (error) {
+          return false;
+        }
+      }
+
+      function buildAnalysisSnapshot(name) {
+        return {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name,
+          savedAt: new Date().toISOString(),
+          dataset: state.dataset,
+          analysis: state.analysis,
+          slug: state.slug,
+          findings: state.findings,
+          transformLog: state.transformLog,
+          chartConfigs: chartSlots.map((slot) => ({
+            label: slot.label, type: slot.type.value, x: slot.x.value, y: slot.y.value,
+            agg: slot.agg.value, group: slot.group.value, sort: slot.sort.value,
+            customTitle: slot.titleInput.value.trim(),
+          })),
+        };
+      }
+
+      function saveCurrentAnalysis(name) {
+        if (!state.analysis) return {ok: false, message: 'No analysis loaded to save.'};
+        const trimmedName = (name || '').trim() || `${state.analysis.dataset_name || 'Analysis'} — ${new Date().toLocaleString()}`;
+        const list = loadSavedAnalyses();
+        list.unshift(buildAnalysisSnapshot(trimmedName));
+        const ok = persistSavedAnalyses(list);
+        return ok ? {ok: true} : {ok: false, message: 'Could not save — your browser storage may be full or unavailable (e.g. private browsing).'};
+      }
+
+      function deleteSavedAnalysis(id) {
+        persistSavedAnalyses(loadSavedAnalyses().filter((item) => item.id !== id));
+        renderSavedAnalysesPanel();
+      }
+
+      function restoreSavedAnalysis(id) {
+        const item = loadSavedAnalyses().find((entry) => entry.id === id);
+        if (!item) return;
+        state.dataset = item.dataset;
+        state.analysis = item.analysis;
+        state.slug = item.slug || null;
+        state.findings = item.findings || [];
+        state.transformLog = item.transformLog || [];
+        downloadFullBtn.hidden = !state.slug;
+        fullAnalysisBtn.hidden = true;
+        resetTransformBtn.hidden = state.transformLog.length === 0;
+        pastAnalysesPanel.hidden = true;
+
+        const fields = Object.keys((state.analysis?.preview || [])[0] || {});
+        if (fields.length) {
+          vizSectionEl.hidden = false;
+          rebuildChartSlots(fields, [], item.chartConfigs);
+          resetDatasetEditorSlots();
+        }
+        renderAnalysis({rebuildCharts: false});
+      }
+
+      function renderSavedAnalysesPanel() {
+        const list = loadSavedAnalyses();
+        if (!list.length) {
+          pastAnalysesListEl.innerHTML = '<div class="result-item">No saved analyses yet. Load a dataset, then click &quot;Save analysis&quot;.</div>';
+          return;
+        }
+        pastAnalysesListEl.innerHTML = list.map((item) => `
+          <div class="past-analysis-item">
+            <strong>${escapeHtml(item.name)}</strong>
+            <div class="meta">${escapeHtml(item.dataset?.name || item.analysis?.dataset_name || 'dataset')} · ${escapeHtml(new Date(item.savedAt).toLocaleString())}</div>
+            <button type="button" class="btn secondary card-small-btn" style="margin-right: 6px;" data-load-id="${item.id}">Load</button>
+            <button type="button" class="btn secondary card-small-btn" data-delete-id="${item.id}">Delete</button>
+          </div>
+        `).join('');
+        pastAnalysesListEl.querySelectorAll('[data-load-id]').forEach((btn) => {
+          btn.addEventListener('click', () => restoreSavedAnalysis(btn.dataset.loadId));
+        });
+        pastAnalysesListEl.querySelectorAll('[data-delete-id]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            if (confirm('Delete this saved analysis? This cannot be undone.')) deleteSavedAnalysis(btn.dataset.deleteId);
+          });
+        });
       }
 
       async function searchDatasets() {
@@ -904,6 +1646,8 @@
           state.dataset = json.dataset;
           state.analysis = json.analysis;
           state.slug = null;
+          state.transformLog = [];
+          resetTransformBtn.hidden = true;
           downloadFullBtn.hidden = true;
           fullAnalysisBtn.hidden = true;
           renderAnalysis();
@@ -932,6 +1676,8 @@
         state.dataset = json.dataset;
         state.analysis = json.analysis;
         state.slug = slug;
+        state.transformLog = [];
+        resetTransformBtn.hidden = true;
         downloadFullBtn.hidden = false;
         fullAnalysisBtn.hidden = !(state.analysis?.sample?.is_sample);
         renderAnalysis();
@@ -943,13 +1689,17 @@
         state.dataset = json.dataset;
         state.analysis = json.analysis;
         state.slug = null;
+        state.transformLog = [];
+        resetTransformBtn.hidden = true;
         downloadFullBtn.hidden = true;
         fullAnalysisBtn.hidden = true;
         renderAnalysis();
       }
 
-      function renderAnalysis() {
+      function renderAnalysis(options = {}) {
+        const {rebuildCharts = true} = options;
         if (!state.analysis) return;
+        saveAnalysisBtn.hidden = false;
 
         const snap = state.analysis.research_snapshot || {};
         datasetInfoEl.innerHTML = `
@@ -1013,8 +1763,17 @@
         const fields = Object.keys((state.analysis.preview || [])[0] || {});
         if (fields.length) {
           vizSectionEl.hidden = false;
-          rebuildChartSlots(fields, state.analysis.recommendations || []);
-        } else {
+          if (rebuildCharts) {
+            rebuildChartSlots(fields, state.analysis.recommendations || []);
+            resetDatasetEditorSlots();
+            renderTransformLog();
+          } else {
+            chartSlots.forEach((slot) => {
+              refreshChartFieldOptions(slot, fields);
+              renderChart(slot);
+            });
+          }
+        } else if (rebuildCharts) {
           vizSectionEl.hidden = true;
         }
         renderFindings();
@@ -1025,6 +1784,10 @@
         if (!fields.length) return;
         createChartSlot(`Custom chart ${chartSlots.length + 1}`, fields);
       });
+      addDatasetEditorBtn.addEventListener('click', () => {
+        createDatasetEditorSlot(`Dataset editor ${datasetEditorSlots.length + 1}`);
+      });
+      resetTransformBtn.addEventListener('click', resetAllTransforms);
 
       document.getElementById('search-btn').addEventListener('click', searchDatasets);
       uploadBtn.addEventListener('click', uploadDataset);
@@ -1062,6 +1825,33 @@
       document.getElementById('analyze-btn').addEventListener('click', loadDemoData);
       searchInput.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') searchDatasets();
+      });
+
+      pastAnalysesBtn.addEventListener('click', () => {
+        pastAnalysesPanel.hidden = !pastAnalysesPanel.hidden;
+        if (!pastAnalysesPanel.hidden) renderSavedAnalysesPanel();
+      });
+      saveAnalysisBtn.addEventListener('click', () => {
+        saveNameInput.value = state.analysis?.dataset_name ? `${state.analysis.dataset_name} analysis` : '';
+        saveNameOverlay.hidden = false;
+        saveNameInput.focus();
+      });
+      document.getElementById('save-name-cancel-btn').addEventListener('click', () => { saveNameOverlay.hidden = true; });
+      document.getElementById('save-name-confirm-btn').addEventListener('click', () => {
+        const result = saveCurrentAnalysis(saveNameInput.value);
+        saveNameOverlay.hidden = true;
+        if (!result.ok) {
+          alert(result.message);
+          return;
+        }
+        if (!pastAnalysesPanel.hidden) renderSavedAnalysesPanel();
+      });
+      saveNameInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') document.getElementById('save-name-confirm-btn').click();
+        if (event.key === 'Escape') saveNameOverlay.hidden = true;
+      });
+      saveNameOverlay.addEventListener('click', (event) => {
+        if (event.target === saveNameOverlay) saveNameOverlay.hidden = true;
       });
       document.getElementById('export-notebook-btn').addEventListener('click', async () => {
         if (!state.analysis) return;

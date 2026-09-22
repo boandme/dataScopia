@@ -158,34 +158,26 @@ kaggle_datasetAnalysis/
 └── requirements.txt or package.json
 ```
 
-## Development Roadmap
+## Version History
 
-### Phase 1: Planning and specification
-- Define the product direction and MVP scope
-- Confirm architecture and core workflows
-- Document requirements and technical constraints
+- **v0.1** (2026-09-19) — Initial plan: product spec, architecture doc, and repo scaffolding.
+- **v0.3** (2026-09-19 – 2026-09-20) — First working backend: Kaggle auth + search, dataset loading via `kagglehub`, FastAPI wired to a basic profiler and a Plotly frontend.
+- **v0.35** (2026-09-20) — Workspace overhaul: sample-based streaming analysis (no full download required by default, via HTTP range/truncated reads), server-side dataframe caching, a deterministic natural-language Q&A engine grounded in real pandas/scipy computation, CSV/Parquet/JSON/Excel upload, deeper Kaggle search (had been silently capped at ~3–5 results by a parameter bug), reproducible `.ipynb` export, and a first UX pass on the chart editor.
+- **v0.38** (2026-09-20) — Q&A engine expansion (dataset overview, duplicate detection, value counts, column-level ranking, ratios, trend detection, multi-condition filters) plus real column-matching bug fixes found through testing; Kaggle dataset/column description surfacing; UI polish (wider layout, capped Research Snapshot lists, sidebar sizing).
+- **v0.4** (2026-09-21) — In-app dataset transformation (item 4 on the roadmap below): filter/clean/merge-columns applied server-side on the full analyzed sample, composable, reset-able, and reflected live in every chart and question. localStorage-backed saved analyses with a "Past Analyses" panel and named saves. Per-chart export with format/scale controls. Unified card-based workspace redesign so chart and dataset-editor cards share one grid and visual system instead of conflicting layouts. Added a 55-test unit suite plus a benchmark script that caught a real ~440x performance regression in the column-merge operation (row-wise Python apply instead of vectorized pandas) and fixed it.
 
-### Phase 2: MVP foundation
-- Dataset search and loading backend
-- Schema profiling and research snapshot generation
-- Basic visualization recommendation system
-- Multi-dataset workspace support
+## Roadmap: what's still needed to be a genuinely useful tool
 
-### Phase 3: AI analysis layer
-- Dataset-aware analysis agent
-- Natural-language question handling
-- Computation and notebook-logging workflows
+The MVP checklist above is functionally complete for a *single* dataset, single-session workflow. The gaps below are what stand between that and something students, researchers, and analysts would actually adopt for real work — not just a demo.
 
-### Phase 4: Research notebook and export
-- Save findings and code
-- Generate Jupyter Notebooks
-- Improve reproducibility and documentation
-
-### Phase 5: Advanced features
-- More sophisticated statistical testing
-- ML workflows and model comparison
-- Data join recommendations and cross-dataset analysis
-- Expanded export and dataset management tools
+1. **True multi-dataset workspace.** Load, switch between, and compare two or more datasets at once; surface likely join keys (e.g. Country + Year) between them. This was explicit MVP scope and is currently entirely unbuilt — the app only ever holds one active dataset in memory.
+2. **Persistent projects.** Findings, saved charts, and the loaded dataset currently live only in browser memory and disappear on refresh. Needs save/resume — at minimum local-storage-backed, ideally a real saved-project file or account.
+3. **A genuinely agentic AI layer.** The Q&A engine answers one question at a time against a fixed dataframe, with no memory between questions and no chaining ("filter to 2020, then check the correlation"). This is also the natural place to plug in a real LLM backend behind the existing `(question, dataframe) -> QAResult` contract, instead of today's deterministic intent-matching.
+4. **In-app data cleaning and transformation.** Filtering rows, handling missing values, excluding outliers, renaming/recasting columns — needed before this is useful for real domain analysis rather than just profiling a dataset as-is.
+5. **Shareable exports beyond a notebook.** A PDF/HTML report and per-chart image export, so a non-Python domain expert — the actual "researcher in biology/economics/policy" persona this is aimed at — can use the output without opening Jupyter.
+6. **A first-class Data Quality Report, and clearer license/redistribution visibility.** Both are explicit in the original spec; today they're informal bullet insights rather than a dedicated exportable artifact, and a dataset's license isn't surfaced prominently before someone downloads or redistributes it.
+7. **Onboarding.** No guided first run and no visible "what can I ask" reference beyond a one-line hint — most of what the Q&A engine can do (statistical tests, ML baselines, trend detection) is undiscoverable unless you already know to ask for it.
+8. **Actual deployment.** The app currently only runs via a local `uvicorn` process plus opening a local HTML file by hand. Nothing is hosted — for students/researchers to reach it without cloning the repo and running Python, it needs a real deployment target: containerized, hosted somewhere, secrets handled outside `.env`. (The backend is FastAPI, not Flask — worth a quick sanity check on whether that's a hard requirement or shorthand for "a real deployed web app," since a framework swap would be a lateral rewrite with no functional gain over just productionizing what's already there.)
 
 ## Open-Source Goals
 
@@ -205,4 +197,4 @@ The platform must respect dataset licensing, Kaggle API rules, and platform usag
 
 ## Status
 
-This repository is currently in the planning phase. The next steps are to finalize the product specification, confirm the MVP architecture, and then begin implementation incrementally.
+Past the planning phase — see [Version History](#version-history) above. The single-dataset MVP loop (search → sample-based analyze → Q&A → charts → save findings → export notebook) works end-to-end against live Kaggle data. See [Roadmap](#roadmap-whats-still-needed-to-be-a-genuinely-useful-tool) for what's next, in priority order.

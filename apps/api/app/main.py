@@ -31,6 +31,7 @@ from fastapi.responses import FileResponse
 from analysis.profiler import analyze_dataframe
 from analysis.notebook_export import build_notebook
 from analysis.qa_engine import answer_question
+from analysis.transforms import apply_transform, TransformError
 from dataset.kaggle_search import (
     download_kaggle_dataset,
     get_dataset_description,
@@ -214,6 +215,69 @@ async def upload_dataset(file: UploadFile = File(...)) -> dict[str, object]:
         return {"dataset": _serializable_dataset(dataset), "analysis": analysis}
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _original_cache_key(dataset_id: str) -> str:
+    return f"{dataset_id}::original"
+
+
+@app.post("/datasets/transform")
+def transform_dataset(payload: dict[str, object]) -> dict[str, object]:
+    """Apply one filter/clean/transform step to the cached dataframe for `dataset_id`, in place
+    of the working copy - so it composes with further transforms, charts, and Q&A. The very
+    first pre-transform snapshot is kept under a shadow cache key so /datasets/transform/reset
+    can undo everything in one step."""
+    dataset_id = payload.get("dataset_id")
+    op_type = payload.get("type")
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    dataset_name = str(payload.get("dataset_name") or "dataset")
+    if not dataset_id or not op_type:
+        raise HTTPException(status_code=400, detail="dataset_id and type are required.")
+
+    df = workspace_cache.get(str(dataset_id))
+    if df is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No cached data found for this dataset in this session. Re-analyze it first.",
+        )
+
+    original_key = _original_cache_key(str(dataset_id))
+    if workspace_cache.get(original_key) is None:
+        workspace_cache.put(original_key, df)
+
+    try:
+        new_df, description = apply_transform(df, str(op_type), params)
+    except TransformError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    workspace_cache.put(str(dataset_id), new_df)
+    analysis = _analysis_with_preview(new_df, dataset_name)
+    return {
+        "analysis": analysis,
+        "description": description,
+        "shape": {"rows": int(new_df.shape[0]), "columns": int(new_df.shape[1])},
+    }
+
+
+@app.post("/datasets/transform/reset")
+def reset_dataset_transform(payload: dict[str, object]) -> dict[str, object]:
+    """Restore the dataset to its state before the first transform was applied this session."""
+    dataset_id = payload.get("dataset_id")
+    dataset_name = str(payload.get("dataset_name") or "dataset")
+    if not dataset_id:
+        raise HTTPException(status_code=400, detail="dataset_id is required.")
+
+    original_key = _original_cache_key(str(dataset_id))
+    original_df = workspace_cache.get(original_key)
+    if original_df is None:
+        raise HTTPException(status_code=400, detail="No original snapshot to reset to for this dataset.")
+
+    workspace_cache.put(str(dataset_id), original_df)
+    analysis = _analysis_with_preview(original_df, dataset_name)
+    return {
+        "analysis": analysis,
+        "shape": {"rows": int(original_df.shape[0]), "columns": int(original_df.shape[1])},
+    }
 
 
 @app.post("/analysis/notebook")
