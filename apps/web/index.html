@@ -125,12 +125,66 @@
         gap: 20px;
         align-items: start;
         min-width: 0;
+        transition: grid-template-columns 0.22s ease;
+      }
+      /* Collapsing the search sidebar to a thin rail hands its space straight back to the
+         workspace/overview columns - CSS Grid reflows them automatically, no JS layout math
+         needed. */
+      .grid.sidebar-collapsed {
+        grid-template-columns: 56px 1fr;
+      }
+      .sidebar-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      #sidebar {
+        overflow: hidden;
+        transition: padding 0.22s ease;
+      }
+      .sidebar-toggle-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        border-radius: 8px;
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        background: rgba(15, 23, 42, 0.5);
+        color: var(--muted);
+        cursor: pointer;
+        transition: color 0.15s ease, background 0.15s ease, transform 0.22s ease;
+      }
+      .sidebar-toggle-btn:hover {
+        color: var(--text);
+        background: rgba(148, 163, 184, 0.14);
+      }
+      .grid.sidebar-collapsed #sidebar {
+        padding-left: 10px;
+        padding-right: 10px;
+      }
+      .grid.sidebar-collapsed #sidebar h2,
+      .grid.sidebar-collapsed #sidebar-content {
+        display: none;
+      }
+      .grid.sidebar-collapsed .sidebar-toggle-btn svg {
+        transform: rotate(180deg);
       }
       .main-column {
         display: flex;
         flex-direction: column;
         gap: 20px;
         min-width: 0;
+      }
+      /* The workspace (charts/editors) is the primary working surface, so it renders first -
+         visible within the first viewport on load - with the overview/column-explorer detail
+         panels (secondary, reference material) following below. Reordered visually via flex
+         `order` rather than moving it in the DOM, since nothing else depends on source order. */
+      .main-column > #workspace-panel {
+        order: -1;
       }
       .overview-row {
         display: grid;
@@ -905,21 +959,28 @@
         </div>
       </div>
 
-      <div class="grid">
-        <aside class="panel">
-          <h2>Dataset search</h2>
-          <div class="search-box">
-            <input id="search-input" placeholder="Search Kaggle datasets..." />
-            <button class="btn" id="search-btn">Search</button>
+      <div class="grid" id="main-grid">
+        <aside class="panel" id="sidebar">
+          <div class="sidebar-header">
+            <h2>Dataset search</h2>
+            <button type="button" class="sidebar-toggle-btn" id="sidebar-toggle-btn" title="Collapse dataset search" aria-expanded="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
           </div>
-          <div id="results-count" class="results-count"></div>
-          <div id="results" class="results"></div>
+          <div id="sidebar-content">
+            <div class="search-box">
+              <input id="search-input" placeholder="Search Kaggle datasets..." />
+              <button class="btn" id="search-btn">Search</button>
+            </div>
+            <div id="results-count" class="results-count"></div>
+            <div id="results" class="results"></div>
 
-          <div class="divider">— or —</div>
-          <div class="hint">Analyze a file already on your computer. Nothing is uploaded to Kaggle or saved on the server — it's parsed in memory just for this analysis.</div>
-          <div class="upload-row">
-            <input type="file" id="upload-input" accept=".csv,.tsv,.json,.parquet,.xlsx,.xls" />
-            <button class="btn secondary" id="upload-btn" style="width: 100%;">Upload</button>
+            <div class="divider">— or —</div>
+            <div class="hint">Analyze a file already on your computer. Nothing is uploaded to Kaggle or saved on the server — it's parsed in memory just for this analysis.</div>
+            <div class="upload-row">
+              <input type="file" id="upload-input" accept=".csv,.tsv,.json,.parquet,.xlsx,.xls" />
+              <button class="btn secondary" id="upload-btn" style="width: 100%;">Upload</button>
+            </div>
           </div>
         </aside>
 
@@ -2228,10 +2289,48 @@
         URL.revokeObjectURL(link.href);
       });
       document.getElementById('load-demo-btn').addEventListener('click', loadDemoData);
-      document.getElementById('analyze-btn').addEventListener('click', loadDemoData);
+
+      // "Analyze current dataset" must never silently substitute the demo dataset - it should
+      // bring the user back to whatever they're actually working with: the dataset already
+      // loaded this session, or (if the session was refreshed and nothing is loaded) the most
+      // recently saved analysis from their history. Only guide them to load one if neither exists.
+      function analyzeCurrentDataset() {
+        if (state.analysis) {
+          renderAnalysis({rebuildCharts: false});
+          document.getElementById('workspace-panel')?.scrollIntoView({behavior: 'smooth', block: 'start'});
+          return;
+        }
+        const saved = loadSavedAnalyses();
+        if (saved.length) {
+          restoreSavedAnalysis(saved[0].id);
+          return;
+        }
+        resultsEl.innerHTML = '<div class="result-item">No dataset loaded yet — search Kaggle, upload a file, or open a past analysis to get started.</div>';
+        searchInput.focus();
+      }
+      document.getElementById('analyze-btn').addEventListener('click', analyzeCurrentDataset);
       searchInput.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') searchDatasets();
       });
+
+      // Collapsible dataset-search sidebar: reclaims horizontal space for the workspace/overview
+      // columns on demand. CSS Grid reflows them automatically when the sidebar's column shrinks,
+      // so this only needs to toggle a class and remember the choice across visits.
+      const SIDEBAR_COLLAPSED_KEY = 'kaggleWorkspace.sidebarCollapsed.v1';
+      const mainGrid = document.getElementById('main-grid');
+      const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+      function setSidebarCollapsed(collapsed) {
+        mainGrid.classList.toggle('sidebar-collapsed', collapsed);
+        sidebarToggleBtn.setAttribute('aria-expanded', String(!collapsed));
+        sidebarToggleBtn.title = collapsed ? 'Expand dataset search' : 'Collapse dataset search';
+        try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (error) { /* private browsing */ }
+      }
+      sidebarToggleBtn.addEventListener('click', () => {
+        setSidebarCollapsed(!mainGrid.classList.contains('sidebar-collapsed'));
+      });
+      try {
+        setSidebarCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
+      } catch (error) { /* private browsing */ }
 
       pastAnalysesBtn.addEventListener('click', () => {
         pastAnalysesPanel.hidden = !pastAnalysesPanel.hidden;

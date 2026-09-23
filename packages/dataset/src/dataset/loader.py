@@ -7,8 +7,22 @@ from typing import Any
 
 import pandas as pd
 
+from .encoding import decode_bytes, sniff_delimiter
 
 DATASET_FILE_EXTENSIONS = {".csv", ".tsv", ".parquet", ".xlsx", ".xls", ".json"}
+
+
+def _read_delimited(data: bytes, default_sep: str) -> pd.DataFrame:
+    """Shared CSV/TSV parsing for both local-file and in-memory upload paths: detect the real
+    text encoding and (for the ambiguous ".csv" case) the real delimiter, instead of assuming
+    UTF-8 + comma - the assumption that silently corrupts a large fraction of real Kaggle CSVs
+    into garbled column names and values."""
+    text = decode_bytes(data)
+    sep = sniff_delimiter(text, fallback=default_sep) if default_sep == "," else default_sep
+    try:
+        return pd.read_csv(io.StringIO(text), sep=sep)
+    except Exception:
+        return pd.read_csv(io.StringIO(text), sep=sep, engine="python", on_bad_lines="skip")
 
 
 def find_dataset_files(directory: str | os.PathLike[str]) -> list[str]:
@@ -42,9 +56,9 @@ def load_dataset(dataset_path: str | os.PathLike[str], file_name: str | None = N
     suffix = main_file.suffix.lower()
 
     if suffix == ".csv":
-        df = pd.read_csv(main_file)
+        df = _read_delimited(main_file.read_bytes(), default_sep=",")
     elif suffix == ".tsv":
-        df = pd.read_csv(main_file, sep="\t")
+        df = _read_delimited(main_file.read_bytes(), default_sep="\t")
     elif suffix == ".parquet":
         df = pd.read_parquet(main_file)
     elif suffix in {".xlsx", ".xls"}:
@@ -70,9 +84,9 @@ def load_dataframe_from_bytes(filename: str, contents: bytes) -> pd.DataFrame:
     suffix = Path(filename).suffix.lower()
     buffer = io.BytesIO(contents)
     if suffix == ".csv":
-        return pd.read_csv(buffer)
+        return _read_delimited(contents, default_sep=",")
     if suffix == ".tsv":
-        return pd.read_csv(buffer, sep="\t")
+        return _read_delimited(contents, default_sep="\t")
     if suffix == ".parquet":
         return pd.read_parquet(buffer)
     if suffix in {".xlsx", ".xls"}:

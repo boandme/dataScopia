@@ -8,6 +8,7 @@ from urllib.parse import quote
 import pandas as pd
 import requests
 
+from .encoding import decode_bytes, sniff_delimiter
 from .kaggle_search import KAGGLE_API_BASE, _kaggle_request_kwargs, validate_kaggle_credentials
 
 TABULAR_EXTENSIONS_PRIORITY = [".csv", ".tsv", ".parquet", ".json", ".xlsx", ".xls"]
@@ -112,15 +113,23 @@ def _estimate_total_rows(sample_rows: int, sample_bytes: int, total_bytes: int |
 
 
 def dataframe_from_delimited_sample(data: bytes, truncated: bool, sep: str = ",") -> pd.DataFrame:
-    text = data.decode("utf-8", errors="replace")
+    """Parse a streamed byte sample of a CSV/TSV file, detecting its actual text encoding and
+    delimiter rather than assuming UTF-8 and the extension's nominal separator - about a fifth
+    to a third of real Kaggle CSVs are not UTF-8, and a ".csv" extension doesn't guarantee a
+    comma delimiter (many European-locale exports use semicolons)."""
+    text = decode_bytes(data)
     if truncated:
         last_newline = text.rfind("\n")
         if last_newline > 0:
             text = text[:last_newline]
+    # Only re-sniff when the caller's default is the ambiguous comma case (".csv" doesn't
+    # guarantee a comma delimiter); an explicit ".tsv" tab is trusted as-is, since sniffing a
+    # tab-delimited file whose fields happen to contain lots of commas can misfire.
+    detected_sep = sniff_delimiter(text, fallback=sep) if sep == "," else sep
     try:
-        return pd.read_csv(io.StringIO(text), sep=sep)
+        return pd.read_csv(io.StringIO(text), sep=detected_sep)
     except Exception:
-        return pd.read_csv(io.StringIO(text), sep=sep, engine="python", on_bad_lines="skip")
+        return pd.read_csv(io.StringIO(text), sep=detected_sep, engine="python", on_bad_lines="skip")
 
 
 def sample_parquet_dataset(
