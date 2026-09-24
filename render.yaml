@@ -1,0 +1,25 @@
+# Render Blueprint - lets Render auto-configure the service from this file instead of manual
+# dashboard setup. In the Render dashboard: New -> Blueprint -> select this repo.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: datascopia
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m waitress --host=0.0.0.0 --port=$PORT --threads=8 wsgi:app
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      # Kaggle API credentials - required for dataset search/analyze/download. Get them from
+      # https://www.kaggle.com/settings -> API -> Create New Token, which downloads a
+      # kaggle.json containing these two values. `sync: false` means Render will prompt for
+      # them in its dashboard rather than reading a value from this file, so they're never
+      # committed to the repo.
+      - key: KAGGLE_USERNAME
+        sync: false
+      - key: KAGGLE_KEY
+        sync: false
+      - key: APP_TITLE
+        value: DataScopia

@@ -25,6 +25,23 @@ python -m flask --app apps/api/app/main.py run --debug --host 127.0.0.1 --port 8
 `--debug` restarts the server on code changes, which `run.py` intentionally doesn't do (it prioritizes a single stable process for normal use). The frontend is served from the same URL either way.
 </details>
 
+## Deploying to Render (a real hosted URL)
+
+`python run.py` is for local use — it binds a socket directly and runs Flask's own dev server, which explicitly refuses to be a production server. A hosted deployment needs a real WSGI server pointed at a fixed port the host controls, which is what `wsgi.py` + `Procfile` are for.
+
+1. Push this repo to GitHub (already done if you're reading this from there).
+2. In the [Render dashboard](https://dashboard.render.com), choose **New → Blueprint** and select this repo. Render reads `render.yaml` and configures the service automatically (build command, start command, health check).
+3. When prompted, set the two required environment variables — your Kaggle API credentials from [kaggle.com/settings → API → Create New Token](https://www.kaggle.com/settings), which downloads a `kaggle.json` containing them:
+   - `KAGGLE_USERNAME`
+   - `KAGGLE_KEY`
+4. Deploy. Render builds with `pip install -r requirements.txt` and starts the app with `python -m waitress --host=0.0.0.0 --port=$PORT --threads=8 wsgi:app` — the same production WSGI server (`waitress`), verified locally, that Render's Linux container will run. You get a public `https://<your-app>.onrender.com` URL serving the full app, frontend and API together, exactly like `run.py` does locally.
+
+No manual dashboard configuration is required — everything Render needs is already in `render.yaml`. If you'd rather configure it by hand (or use a different host like Railway or Fly.io that also runs a plain Python web service), the build command is `pip install -r requirements.txt` and the start command is the one in `Procfile`.
+
+**One architectural thing worth knowing:** dataset analysis is cached in-memory (a plain Python dict, see `workspace_cache.py`), not in a database. That's fine for a single always-on process — which is what the free tier and the Procfile above both give you — but it means the app can't currently be scaled to multiple worker processes/instances without a shared cache (e.g. Redis) to replace it, since a request could otherwise land on a process that never analyzed that dataset. Not a concern for personal or small-audience use; worth revisiting before scaling up traffic.
+
+Render's free tier spins the service down after ~15 minutes idle; the first request after a quiet period takes roughly 30-60 seconds while it wakes back up. That's a Render free-tier characteristic, not something this app can work around.
+
 ### Storage model
 
 Dataset analysis does not require downloading the full dataset anywhere — not to the browser, and not to the API server. By default, `/datasets/analyze` streams only a bounded sample (`ANALYSIS_SAMPLE_MB`, default 5 MB) of the dataset's primary file directly from Kaggle: CSV/TSV files are read up to that byte limit and truncated at the last complete row, and Parquet files use HTTP range requests via `pyarrow`/`fsspec` to read only as many row groups as needed, using the file's footer metadata for an exact row count. Nothing is written to disk.
@@ -194,7 +211,7 @@ The MVP checklist above is functionally complete for a *single* dataset, single-
 5. ~~**Shareable exports beyond a notebook.**~~ Done (v0.4/v0.42) — per-chart image export and a server-side PDF research report with real statistical narrative, not just a stats dump.
 6. **A first-class, standalone Data Quality Report.** Data-quality narrative is now woven into the PDF export's "Data Quality Assessment" section, and license text is surfaced in the dataset description panel — but there's still no dedicated, exportable data-quality artifact independent of the full report.
 7. **Onboarding.** No guided first run and no visible "what can I ask" reference beyond a one-line hint — most of what the Q&A engine can do (statistical tests, ML baselines, trend detection) is undiscoverable unless you already know to ask for it.
-8. **Actual hosted deployment.** Local setup is now trivial (`python run.py` launches the whole app, server + frontend, with one command — see [Run DataScopia](#run-datascopia)), and the backend runs on Flask rather than FastAPI/uvicorn as of v0.5. What's still missing is a real *hosted* target: containerized, deployed somewhere reachable over the internet, secrets handled outside `.env` — so students/researchers can reach it without cloning the repo and running Python locally at all.
+8. ~~**Actual hosted deployment.**~~ Deployment-ready (v0.5): `wsgi.py`, `Procfile`, and `render.yaml` are set up for a one-Blueprint deploy to Render (or any host that runs a plain Python web service), with credentials handled via environment variables instead of a committed `.env` — see [Deploying to Render](#deploying-to-render-a-real-hosted-url). Actually clicking through Render's dashboard to stand up a live URL is still a manual, one-time step outside this repo. Caveat worth tracking as usage grows: the in-memory `workspace_cache` (no database) means this is currently a single-process deployment, not one that scales to multiple workers/instances without further work.
 
 ## Open-Source Goals
 

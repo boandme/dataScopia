@@ -432,12 +432,6 @@
       .research-findings .insights-toggle {
         font-size: 0.88rem;
       }
-      .recommendations {
-        margin: 18px 0 24px;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-      }
       .chip {
         background: rgba(56, 189, 248, 0.14);
         color: var(--text);
@@ -1048,9 +1042,7 @@
         </div>
 
         <section class="panel" id="workspace-panel">
-          <h2>Workspace</h2>
-          <div class="recommendations" id="recommendations"></div>
-
+          <p class="hint" id="workspace-empty-hint">Load a dataset to start building charts and dataset editors.</p>
           <div id="viz-section" hidden>
             <div class="workspace-toolbar">
               <h3>Charts &amp; Dataset Editors</h3>
@@ -1200,8 +1192,12 @@
       const qualityList = document.getElementById('quality-list');
       const columnExplorerSelect = document.getElementById('column-explorer-select');
       const columnExplorerBody = document.getElementById('column-explorer-body');
-      const recommendationsEl = document.getElementById('recommendations');
       const vizSectionEl = document.getElementById('viz-section');
+      const workspaceEmptyHintEl = document.getElementById('workspace-empty-hint');
+      function setVizSectionVisible(visible) {
+        vizSectionEl.hidden = !visible;
+        workspaceEmptyHintEl.hidden = visible;
+      }
       const editorEl = document.getElementById('visualization-editor');
       const chartTemplate = document.getElementById('chart-card-template');
       const addChartBtn = document.getElementById('add-chart-btn');
@@ -2054,7 +2050,7 @@
 
         const fields = Object.keys((state.analysis?.preview || [])[0] || {});
         if (fields.length) {
-          vizSectionEl.hidden = false;
+          setVizSectionVisible(true);
           rebuildChartSlots(fields, [], item.chartConfigs);
           resetDatasetEditorSlots();
         }
@@ -2245,13 +2241,9 @@
         renderCappedList(questionsList, state.analysis.research_questions, 4, 'No research questions suggested yet.');
         renderCappedList(qualityList, state.analysis.data_quality_issues, 4, 'No major data-quality issues detected.');
 
-        recommendationsEl.innerHTML = (state.analysis.recommendations || [])
-          .map((item) => `<span class="chip">${item.type}</span>`)
-          .join('');
-
         const fields = Object.keys((state.analysis.preview || [])[0] || {});
         if (fields.length) {
-          vizSectionEl.hidden = false;
+          setVizSectionVisible(true);
           if (rebuildCharts) {
             rebuildChartSlots(fields, state.analysis.recommendations || []);
             resetDatasetEditorSlots();
@@ -2263,7 +2255,7 @@
             });
           }
         } else if (rebuildCharts) {
-          vizSectionEl.hidden = true;
+          setVizSectionVisible(false);
         }
         renderFindings();
       }
