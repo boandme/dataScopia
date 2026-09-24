@@ -2,16 +2,28 @@
 
 *A Kaggle Dataset Analysis & AI Research Workspace.*
 
-## Run the API
+## Run DataScopia
 
-From the project root, start the Python server:
+From the project root:
 
 ```powershell
 cd "C:\Users\vyom\OneDrive\Desktop\code\kaggle_datasetAnalysis"
-python -m uvicorn apps.api.app.main:app --reload --host 127.0.0.1 --port 8000
+python run.py
 ```
 
-Then open `apps/web/index.html` with VS Code Live Server. Keep the API terminal running while using the frontend.
+That's it — this starts the server and opens the app in your default browser automatically once it's ready (if port 8000 is busy, it falls back to the next free port and tells you which one). On Windows you can also just double-click `start_datascopia.bat`, which installs dependencies on first run if needed. The frontend is served directly by the same server at `/`, so there's no separate "open the HTML file" step and no second terminal to manage.
+
+Close the terminal window (or press Ctrl+C) to stop the server.
+
+<details>
+<summary>Running the API directly (for development)</summary>
+
+```powershell
+python -m flask --app apps/api/app/main.py run --debug --host 127.0.0.1 --port 8000
+```
+
+`--debug` restarts the server on code changes, which `run.py` intentionally doesn't do (it prioritizes a single stable process for normal use). The frontend is served from the same URL either way.
+</details>
 
 ### Storage model
 
@@ -167,19 +179,22 @@ kaggle_datasetAnalysis/
 - **v0.35** (2026-09-20) — Workspace overhaul: sample-based streaming analysis (no full download required by default, via HTTP range/truncated reads), server-side dataframe caching, a deterministic natural-language Q&A engine grounded in real pandas/scipy computation, CSV/Parquet/JSON/Excel upload, deeper Kaggle search (had been silently capped at ~3–5 results by a parameter bug), reproducible `.ipynb` export, and a first UX pass on the chart editor.
 - **v0.38** (2026-09-20) — Q&A engine expansion (dataset overview, duplicate detection, value counts, column-level ranking, ratios, trend detection, multi-condition filters) plus real column-matching bug fixes found through testing; Kaggle dataset/column description surfacing; UI polish (wider layout, capped Research Snapshot lists, sidebar sizing).
 - **v0.4** (2026-09-21) — In-app dataset transformation (item 4 on the roadmap below): filter/clean/merge-columns applied server-side on the full analyzed sample, composable, reset-able, and reflected live in every chart and question. localStorage-backed saved analyses with a "Past Analyses" panel and named saves. Per-chart export with format/scale controls. Unified card-based workspace redesign so chart and dataset-editor cards share one grid and visual system instead of conflicting layouts. Added a 55-test unit suite plus a benchmark script that caught a real ~440x performance regression in the column-merge operation (row-wise Python apply instead of vectorized pandas) and fixed it.
+- **v0.42** (2026-09-21) — Full **DataScopia** brand identity and page redesign. Server-side PDF research report generation (`analysis/report.py`): real scipy-backed statistical narrative per chart (Pearson/Spearman correlation, distribution shape, group-comparison significance tests) plus a synthesizing conclusion and a "Next Steps" section, replacing an earlier client-side version that just restated on-screen stats. New Column Explorer panel with a name-based column-description inference engine as a fallback wherever the dataset's own documentation doesn't describe a column. Enlarged/restyled Research Snapshot and Research Questions lists. Boolean-dtype crash class (`numpy boolean subtract`) fixed across the profiler and transform engine, with regression tests.
+- **v0.45** (2026-09-22) — Rebuilt the column-description inference into a subject-aware algorithm (e.g. `school_name` → "the name of the school" rather than a generic "name" guess that discarded half the column name), reaching ~88% specific (non-generic) descriptions on a representative name battery. Root-caused and fixed a column/value-garbling bug affecting a meaningful fraction of real Kaggle CSVs: automatic text-encoding detection (cp1252/Latin-1/UTF-16 vs. a hardcoded UTF-8 assumption) and delimiter sniffing (semicolon/tab-delimited files no longer collapse into one garbled column). Collapsible dataset-search sidebar. Workspace (charts/editors) reprioritized to render before the Overview/Column Explorer detail panels so it's visible without scrolling. Fixed "Analyze current dataset," which had been hard-wired to always reload the demo dataset regardless of what was actually loaded.
+- **v0.5** (2026-09-23) — Closed out the garbled-text bug class for good: detects and correctly decodes BOM-less UTF-16 files (a NUL-byte pattern that silently "succeeds" under a naive UTF-8 decode, producing the box-glyph-riddled text reported as a live bug) and ZIP/GZIP-wrapped files served under a plain `.csv` name, plus a final sanity check that raises a clear error instead of ever silently returning garbage column names. Migrated the backend from FastAPI/uvicorn to **Flask**, at the user's request after a uvicorn install failure; along the way, found and fixed two real Windows-specific bugs in the new launcher (`SO_REUSEADDR` silently letting two server instances share one port, and `sys.exit()` calls inside both uvicorn's and werkzeug's startup paths bypassing normal exception handling). The whole app now launches with a single `python run.py` (or double-clicking `start_datascopia.bat` on Windows) — it starts the server, serves the frontend from the same origin, opens the browser automatically, and retries on the next port if the default is busy. "Ask about this dataset" moved to its own compact panel at the very top of the page, above the Workspace, so it's reachable without scrolling.
 
 ## Roadmap: what's still needed to be a genuinely useful tool
 
 The MVP checklist above is functionally complete for a *single* dataset, single-session workflow. The gaps below are what stand between that and something students, researchers, and analysts would actually adopt for real work — not just a demo.
 
 1. **True multi-dataset workspace.** Load, switch between, and compare two or more datasets at once; surface likely join keys (e.g. Country + Year) between them. This was explicit MVP scope and is currently entirely unbuilt — the app only ever holds one active dataset in memory.
-2. **Persistent projects.** Findings, saved charts, and the loaded dataset currently live only in browser memory and disappear on refresh. Needs save/resume — at minimum local-storage-backed, ideally a real saved-project file or account.
+2. ~~**Persistent projects.**~~ Done (v0.4) — localStorage-backed saved analyses with a "Past Analyses" panel, named saves, and full resume (dataset, charts, findings, transform log).
 3. **A genuinely agentic AI layer.** The Q&A engine answers one question at a time against a fixed dataframe, with no memory between questions and no chaining ("filter to 2020, then check the correlation"). This is also the natural place to plug in a real LLM backend behind the existing `(question, dataframe) -> QAResult` contract, instead of today's deterministic intent-matching.
-4. **In-app data cleaning and transformation.** Filtering rows, handling missing values, excluding outliers, renaming/recasting columns — needed before this is useful for real domain analysis rather than just profiling a dataset as-is.
-5. **Shareable exports beyond a notebook.** A PDF/HTML report and per-chart image export, so a non-Python domain expert — the actual "researcher in biology/economics/policy" persona this is aimed at — can use the output without opening Jupyter.
-6. **A first-class Data Quality Report, and clearer license/redistribution visibility.** Both are explicit in the original spec; today they're informal bullet insights rather than a dedicated exportable artifact, and a dataset's license isn't surfaced prominently before someone downloads or redistributes it.
+4. ~~**In-app data cleaning and transformation.**~~ Done (v0.4) — filter/clean/merge-columns, composable and reset-able, applied server-side on the full analyzed sample.
+5. ~~**Shareable exports beyond a notebook.**~~ Done (v0.4/v0.42) — per-chart image export and a server-side PDF research report with real statistical narrative, not just a stats dump.
+6. **A first-class, standalone Data Quality Report.** Data-quality narrative is now woven into the PDF export's "Data Quality Assessment" section, and license text is surfaced in the dataset description panel — but there's still no dedicated, exportable data-quality artifact independent of the full report.
 7. **Onboarding.** No guided first run and no visible "what can I ask" reference beyond a one-line hint — most of what the Q&A engine can do (statistical tests, ML baselines, trend detection) is undiscoverable unless you already know to ask for it.
-8. **Actual deployment.** The app currently only runs via a local `uvicorn` process plus opening a local HTML file by hand. Nothing is hosted — for students/researchers to reach it without cloning the repo and running Python, it needs a real deployment target: containerized, hosted somewhere, secrets handled outside `.env`. (The backend is FastAPI, not Flask — worth a quick sanity check on whether that's a hard requirement or shorthand for "a real deployed web app," since a framework swap would be a lateral rewrite with no functional gain over just productionizing what's already there.)
+8. **Actual hosted deployment.** Local setup is now trivial (`python run.py` launches the whole app, server + frontend, with one command — see [Run DataScopia](#run-datascopia)), and the backend runs on Flask rather than FastAPI/uvicorn as of v0.5. What's still missing is a real *hosted* target: containerized, deployed somewhere reachable over the internet, secrets handled outside `.env` — so students/researchers can reach it without cloning the repo and running Python locally at all.
 
 ## Open-Source Goals
 

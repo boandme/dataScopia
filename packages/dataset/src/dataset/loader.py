@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 
-from .encoding import decode_bytes, sniff_delimiter
+from .encoding import decode_bytes, looks_like_garbled_text, sniff_delimiter, unwrap_binary_archive
 
 DATASET_FILE_EXTENSIONS = {".csv", ".tsv", ".parquet", ".xlsx", ".xls", ".json"}
 
@@ -16,8 +16,15 @@ def _read_delimited(data: bytes, default_sep: str) -> pd.DataFrame:
     """Shared CSV/TSV parsing for both local-file and in-memory upload paths: detect the real
     text encoding and (for the ambiguous ".csv" case) the real delimiter, instead of assuming
     UTF-8 + comma - the assumption that silently corrupts a large fraction of real Kaggle CSVs
-    into garbled column names and values."""
+    into garbled column names and values. Also unwraps a zip/gzip-compressed file that was given
+    a plain ".csv"/".tsv" name."""
+    data, _ = unwrap_binary_archive(data, truncated=False)
     text = decode_bytes(data)
+    if looks_like_garbled_text(text):
+        raise ValueError(
+            "This file's content doesn't look like readable delimited text even after encoding "
+            "detection - it may be corrupted or in a format that isn't supported yet."
+        )
     sep = sniff_delimiter(text, fallback=default_sep) if default_sep == "," else default_sep
     try:
         return pd.read_csv(io.StringIO(text), sep=sep)

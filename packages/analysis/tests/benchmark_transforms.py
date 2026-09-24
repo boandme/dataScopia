@@ -102,7 +102,7 @@ def run_api_benchmark() -> None:
         requests.get(f"{base}/health", timeout=3)
     except Exception:
         print("API server not reachable at", base, "- skipping live benchmark.")
-        print("(start it with: python -m uvicorn apps.api.app.main:app --host 127.0.0.1 --port 8000)")
+        print("(start it with: python run.py)")
         return
 
     print("=" * 78)

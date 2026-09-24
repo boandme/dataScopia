@@ -186,6 +186,24 @@
       .main-column > #workspace-panel {
         order: -1;
       }
+      /* The Q&A box renders above even the workspace - it's a single compact row plus an
+         optional answer, so it costs almost no scroll room while staying reachable without
+         hunting for it inside the (much taller) Dataset Overview panel it used to live in. */
+      .main-column > .quick-ask-panel {
+        order: -2;
+      }
+      .quick-ask-panel {
+        padding-bottom: 18px;
+      }
+      .quick-ask-panel h2 {
+        margin-bottom: 10px;
+      }
+      .quick-ask-panel .hint {
+        margin-bottom: 12px;
+      }
+      .quick-ask-panel .search-box {
+        margin: 0;
+      }
       .overview-row {
         display: grid;
         grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
@@ -985,6 +1003,13 @@
         </aside>
 
         <div class="main-column">
+        <section class="panel quick-ask-panel" id="quick-ask-panel">
+          <h2>Ask about this dataset</h2>
+          <p class="hint">Get a direct, computed answer from the real data instead of a generic summary — e.g. "what percentage of X are above N?", "which category has the highest Y?", or "what correlates with Z?".</p>
+          <div class="search-box"><input id="question-input" placeholder="Ask a research question..." /><button class="btn secondary" id="question-btn">Run</button></div>
+          <div id="question-answer"></div>
+        </section>
+
         <div class="overview-row">
           <section class="panel" id="overview-panel">
             <h2>Dataset Overview</h2>
@@ -1007,13 +1032,6 @@
               <ul id="insights-list"></ul>
               <h3>Research questions</h3>
               <ul id="questions-list"></ul>
-            </div>
-
-            <div class="findings">
-              <h3>Ask about this dataset</h3>
-              <p class="hint">Get a direct, computed answer from the real data instead of a generic summary — e.g. "what percentage of X are above N?", "which category has the highest Y?", or "what correlates with Z?".</p>
-              <div class="search-box"><input id="question-input" placeholder="Ask a research question..." /><button class="btn secondary" id="question-btn">Run</button></div>
-              <div id="question-answer"></div>
             </div>
           </section>
 
@@ -1149,7 +1167,14 @@
     </div>
 
     <script>
-      const API_BASE = window.KAGGLE_API_BASE || new URLSearchParams(window.location.search).get('api') || 'http://localhost:8000';
+      // When this page is served BY the API server itself (the normal case - see run.py), the
+      // API lives on the same origin the page was loaded from, so a relative base ('') is both
+      // correct and portable to whatever port the launcher picked. The explicit localhost:8000
+      // fallback only matters if this file is opened directly as file:// during development,
+      // without the server serving it.
+      const API_BASE = window.KAGGLE_API_BASE
+        || new URLSearchParams(window.location.search).get('api')
+        || (window.location.protocol === 'file:' ? 'http://localhost:8000' : '');
       const state = {
         dataset: null,
         analysis: null,
