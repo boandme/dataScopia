@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+import numpy as np
 import pandas as pd
+
+from .schema import coerce_numeric
 
 
 class TransformError(ValueError):
@@ -155,7 +158,7 @@ def op_cast_type(df: pd.DataFrame, params: dict[str, Any]) -> tuple[pd.DataFrame
     before_missing = int(result[column].isna().sum())
     try:
         if target == "numeric":
-            result[column] = pd.to_numeric(result[column], errors="coerce")
+            result[column] = coerce_numeric(result[column])
         elif target == "string":
             result[column] = result[column].astype(str)
         elif target == "datetime":
@@ -219,6 +222,42 @@ def op_combine_columns(df: pd.DataFrame, params: dict[str, Any]) -> tuple[pd.Dat
     return result, f"Combined [{', '.join(columns)}] into '{new_name}' via {operation}."
 
 
+def op_drop_duplicates(df: pd.DataFrame, params: dict[str, Any]) -> tuple[pd.DataFrame, str]:
+    result = df.drop_duplicates().reset_index(drop=True)
+    removed = len(df) - len(result)
+    if removed == 0:
+        return result, "No duplicate rows found; nothing removed."
+    return result, f"Dropped {removed:,} duplicate row(s), keeping the first occurrence of each."
+
+
+def op_replace_missing_tokens(df: pd.DataFrame, params: dict[str, Any]) -> tuple[pd.DataFrame, str]:
+    column = _get_column(df, params.get("column", ""))
+    tokens = params.get("values") or []
+    if not isinstance(tokens, list) or not tokens:
+        raise TransformError("At least one placeholder value to treat as missing is required.")
+    tokens = [str(t) for t in tokens]
+    result = df.copy()
+    series = result[column]
+    mask = series.notna() & series.astype(str).str.strip().isin(tokens)
+    replaced = int(mask.sum())
+    result[column] = series.where(~mask, np.nan)
+    shown = ", ".join(repr(t) for t in tokens[:4])
+    return result, f"Replaced {replaced:,} placeholder value(s) ({shown}) in '{column}' with real missing values."
+
+
+def op_standardize_text(df: pd.DataFrame, params: dict[str, Any]) -> tuple[pd.DataFrame, str]:
+    column = _get_column(df, params.get("column", ""))
+    result = df.copy()
+    series = result[column]
+    text = series.astype(str).str.strip().str.replace(r"\s+", " ", regex=True)
+    lower = text.str.lower()
+    canonical = text.groupby(lower).agg(lambda v: v.value_counts().index[0])
+    standardized = series.where(series.isna(), lower.map(canonical))
+    changed = int((series.notna() & (standardized.astype(str) != series.astype(str))).sum())
+    result[column] = standardized
+    return result, f"Standardized spacing and spelling in '{column}' ({changed:,} value(s) changed); each variant now uses its most common form."
+
+
 _OPS: dict[str, Callable[[pd.DataFrame, dict[str, Any]], tuple[pd.DataFrame, str]]] = {
     "filter": op_filter,
     "drop_missing": op_drop_missing,
@@ -228,6 +267,9 @@ _OPS: dict[str, Callable[[pd.DataFrame, dict[str, Any]], tuple[pd.DataFrame, str
     "cast_type": op_cast_type,
     "drop_column": op_drop_column,
     "combine_columns": op_combine_columns,
+    "drop_duplicates": op_drop_duplicates,
+    "replace_missing_tokens": op_replace_missing_tokens,
+    "standardize_text": op_standardize_text,
 }
 
 
@@ -243,3 +285,93 @@ def apply_transform(df: pd.DataFrame, op_type: str, params: dict[str, Any]) -> t
     if handler is None:
         raise TransformError(f"Unknown transform type '{op_type}'.")
     return handler(df, params or {})
+
+
+def op_code(df: pd.DataFrame, op_type: str, params: dict[str, Any]) -> str:
+    """The pandas code that performs this operation, generated against the dataframe as it stood
+    *before* the operation (so typed literals - a number vs a string in a filter - are right).
+
+    This is what makes the notebook export reproduce an in-app cleaning session: every transform
+    the workspace applies is stored with this code, and the exported notebook replays it in order.
+    Each snippet is written to give the same result as the corresponding ``op_*`` function above;
+    the test-suite executes both and compares them.
+    """
+    params = params or {}
+    col = params.get("column")
+    if op_type == "filter":
+        comparator = params.get("comparator", "==")
+        value = _parse_value(df[col], params.get("value"))
+        if hasattr(value, "item"):
+            value = value.item()
+        if isinstance(value, float) and value.is_integer() and pd.api.types.is_integer_dtype(df[col]):
+            value = int(value)
+        return f"df = df[df[{col!r}] {comparator} {value!r}].reset_index(drop=True)"
+    if op_type == "drop_missing":
+        if not col or col == "__all__":
+            return "df = df.dropna().reset_index(drop=True)"
+        return f"df = df.dropna(subset=[{col!r}]).reset_index(drop=True)"
+    if op_type == "fill_missing":
+        strategy = params.get("strategy", "mean")
+        if strategy == "mean":
+            fill = f"df[{col!r}].mean()"
+        elif strategy == "median":
+            fill = f"df[{col!r}].median()"
+        elif strategy == "mode":
+            fill = f"df[{col!r}].mode(dropna=True).iloc[0]"
+        else:
+            fill = repr(_parse_value(df[col], params.get("constant_value")))
+        return f"df[{col!r}] = df[{col!r}].fillna({fill})"
+    if op_type == "drop_outliers":
+        return (
+            f"_q1, _q3 = df[{col!r}].dropna().quantile([0.25, 0.75])\n"
+            "_iqr = _q3 - _q1\n"
+            "_low, _high = _q1 - 1.5 * _iqr, _q3 + 1.5 * _iqr\n"
+            f"df = df[df[{col!r}].between(_low, _high) | df[{col!r}].isna()].reset_index(drop=True)"
+        )
+    if op_type == "rename_column":
+        new_name = (params.get("new_name") or "").strip()
+        return f"df = df.rename(columns={{{col!r}: {new_name!r}}})"
+    if op_type == "cast_type":
+        target = params.get("target_type")
+        if target == "numeric":
+            return (
+                f"df[{col!r}] = pd.to_numeric(df[{col!r}].astype(str).str.replace(r'[,$\u20ac\u00a3\u00a5%\\s]', '', regex=True)"
+                ".str.replace(r'^\\((.*)\\)$', r'-\\1', regex=True), errors='coerce')"
+            )
+        if target == "string":
+            return f"df[{col!r}] = df[{col!r}].astype(str)"
+        if target == "datetime":
+            return f"df[{col!r}] = pd.to_datetime(df[{col!r}], errors='coerce')"
+        return f"df[{col!r}] = df[{col!r}].astype('category')"
+    if op_type == "drop_column":
+        return f"df = df.drop(columns=[{col!r}])"
+    if op_type == "combine_columns":
+        columns = params.get("columns") or []
+        new = (params.get("new_name") or "").strip()
+        operation = params.get("operation", "concat")
+        if operation == "concat":
+            separator = params.get("separator", " ")
+            joined = f" + {separator!r} + ".join(f"df[{c!r}].astype(str)" for c in columns)
+            return f"df[{new!r}] = {joined}"
+        if operation in ("sum", "mean"):
+            return f"df[{new!r}] = df[{columns!r}].{operation}(axis=1)"
+        lines = [f"df[{new!r}] = df[{columns[0]!r}]"] + [f"df[{new!r}] = df[{new!r}].fillna(df[{c!r}])" for c in columns[1:]]
+        return "\n".join(lines)
+    if op_type == "drop_duplicates":
+        return "df = df.drop_duplicates().reset_index(drop=True)"
+    if op_type == "replace_missing_tokens":
+        tokens = [str(t) for t in (params.get("values") or [])]
+        return (
+            f"_tokens = {tokens!r}\n"
+            f"_mask = df[{col!r}].notna() & df[{col!r}].astype(str).str.strip().isin(_tokens)\n"
+            f"df[{col!r}] = df[{col!r}].where(~_mask, np.nan)"
+        )
+    if op_type == "standardize_text":
+        return (
+            f"_series = df[{col!r}]\n"
+            "_text = _series.astype(str).str.strip().str.replace(r'\\s+', ' ', regex=True)\n"
+            "_lower = _text.str.lower()\n"
+            "_canonical = _text.groupby(_lower).agg(lambda v: v.value_counts().index[0])\n"
+            f"df[{col!r}] = _series.where(_series.isna(), _lower.map(_canonical))"
+        )
+    raise TransformError(f"No code generator for transform '{op_type}'.")

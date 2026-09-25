@@ -358,6 +358,9 @@ def describe_heatmap(df: pd.DataFrame, numeric_cols: list[str]) -> str:
     )
 
 
+_ENGINE_NARRATED_TYPES = {"timeseries", "map", "treemap", "distribution", "target", "missing", "pair"}
+
+
 def generate_chart_narrative(df: pd.DataFrame, chart: dict[str, Any]) -> str:
     ctype = chart.get("type", "histogram")
     x = chart.get("x")
@@ -366,6 +369,16 @@ def generate_chart_narrative(df: pd.DataFrame, chart: dict[str, Any]) -> str:
     numeric_cols = set(df.select_dtypes(include="number").columns)
 
     try:
+        if ctype in _ENGINE_NARRATED_TYPES:
+            # These chart types are drawn (and explained) by the chart engine; reuse its notes so the
+            # report says exactly what the on-screen chart says, statistics included.
+            from .charts import render_chart
+            from .schema import build_schema
+
+            meta = render_chart(df, chart, build_schema(df)).get("meta", {})
+            notes = meta.get("error") and [meta["error"]] or meta.get("notes") or []
+            if notes:
+                return " ".join(str(n) for n in notes)
         if ctype == "heatmap":
             return describe_heatmap(df, list(df.select_dtypes(include="number").columns))
         if not x or x not in df.columns:

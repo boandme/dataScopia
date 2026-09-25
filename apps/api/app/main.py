@@ -31,27 +31,32 @@ from analysis.profiler import analyze_dataframe
 from analysis.notebook_export import build_notebook
 from analysis.qa_engine import answer_question
 from analysis.report import build_report_pdf
-from analysis.transforms import apply_transform, TransformError
+from analysis.charts import CHART_TYPE_LABELS, render_chart
+from analysis.quality import quality_markdown
+from analysis.schema import build_schema
+from analysis.transforms import apply_transform, op_code, TransformError
 from dataset.kaggle_search import (
     download_kaggle_dataset,
     get_dataset_description,
     kaggle_credential_status,
     search_kaggle_datasets,
 )
+from dataset.license import describe_license
 from dataset.descriptions import extract_column_descriptions, infer_column_description
 from dataset.loader import load_dataset, load_dataframe_from_bytes
 from dataset.streaming import DEFAULT_SAMPLE_BYTES, load_dataset_sample
 import workspace_cache
 
-app = Flask(os.getenv("APP_TITLE", "DataScopia"))
+WEB_DIR = PROJECT_ROOT / "apps" / "web"
+
+# The frontend is plain static files (index.html + styles.css + app.js) served from the same origin.
+app = Flask(os.getenv("APP_TITLE", "DataScopia"), static_folder=str(WEB_DIR), static_url_path="/assets")
 CORS(app)
 
 # How much of a dataset file to stream for sample-based analysis before analysis falls back to
 # asking the user to run a full analysis or full download. Configurable since it trades off
 # analysis fidelity against bandwidth/time for very large files.
 SAMPLE_BYTES = int(float(os.getenv("ANALYSIS_SAMPLE_MB", "5")) * 1024 * 1024) or DEFAULT_SAMPLE_BYTES
-
-WEB_DIR = PROJECT_ROOT / "apps" / "web"
 
 
 class ApiError(Exception):
@@ -101,6 +106,7 @@ def _attach_kaggle_description(dataset: dict[str, object], df: pd.DataFrame, slu
     except Exception:
         info = {}
     dataset["kaggle_info"] = info
+    dataset["license_info"] = describe_license(info.get("license"))
     documented = extract_column_descriptions(info.get("description", ""), list(df.columns))
     _attach_column_descriptions(dataset, df, documented)
 
@@ -116,6 +122,22 @@ def _analysis_with_preview(df: pd.DataFrame, dataset_name: str, sample_info: dic
     analysis = analyze_dataframe(df, dataset_name=dataset_name, sample_info=sample_info)
     analysis["preview"] = json.loads(df.head(300).to_json(orient="records", date_format="iso"))
     return analysis
+
+
+_schema_cache: dict[str, tuple[int, dict[str, object]]] = {}
+
+
+def _schema_for(dataset_id: str, df: pd.DataFrame) -> dict[str, object]:
+    """Schema detection is the expensive part of drawing a chart, and the dataframe only changes
+    on transform/reset, so it is computed once per dataframe object and reused by every chart."""
+    cached = _schema_cache.get(dataset_id)
+    if cached and cached[0] == id(df):
+        return cached[1]
+    schema = build_schema(df)
+    if len(_schema_cache) > 40:
+        _schema_cache.clear()
+    _schema_cache[dataset_id] = (id(df), schema)
+    return schema
 
 
 @app.get("/health")
@@ -136,6 +158,27 @@ def search_datasets():
         return jsonify({"results": []})
     limit = max(1, min(limit, 300))
     return jsonify({"results": search_kaggle_datasets(query, max_results=limit)})
+
+
+@app.get("/datasets/license")
+def dataset_license():
+    """The license of a Kaggle dataset in plain language, so the UI can show it - and get the
+    user's consent - before any file is downloaded."""
+    slug = (request.args.get("slug") or "").strip()
+    if "/" not in slug:
+        raise ApiError(400, "A Kaggle dataset slug (owner/name) is required.")
+    try:
+        info = get_dataset_description(slug)
+    except Exception as exc:
+        info = {}
+        note = f"The license could not be fetched right now ({exc.__class__.__name__})."
+    else:
+        note = ""
+    license_info = describe_license(info.get("license"))
+    if note:
+        license_info["summary"] = f"{note} {license_info['summary']}"
+    return jsonify({"slug": slug, "title": info.get("title", ""), "url": info.get("url") or f"https://www.kaggle.com/datasets/{slug}",
+                    "license": license_info})
 
 
 @app.post("/datasets/load")
@@ -294,6 +337,7 @@ def transform_dataset():
         workspace_cache.put(original_key, df)
 
     try:
+        code = op_code(df, str(op_type), params)
         new_df, description = apply_transform(df, str(op_type), params)
     except TransformError as exc:
         raise ApiError(400, str(exc)) from exc
@@ -304,6 +348,7 @@ def transform_dataset():
         {
             "analysis": analysis,
             "description": description,
+            "code": code,
             "shape": {"rows": int(new_df.shape[0]), "columns": int(new_df.shape[1])},
         }
     )
@@ -333,13 +378,66 @@ def reset_dataset_transform():
     )
 
 
+@app.post("/charts/render")
+def render_workspace_chart():
+    """Draw one chart server-side from the FULL cached dataframe (the browser only ever holds a
+    300-row preview), returning Plotly JSON plus notes/statistics about what was drawn."""
+    payload = _json_body()
+    dataset_id = payload.get("dataset_id")
+    config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+    df = workspace_cache.get(str(dataset_id)) if dataset_id else None
+    if df is None:
+        raise ApiError(404, "This dataset is no longer cached on the server. Re-analyze it to keep charting.")
+    return jsonify(render_chart(df, config, _schema_for(str(dataset_id), df)))
+
+
+@app.get("/charts/types")
+def chart_types():
+    return jsonify({"types": CHART_TYPE_LABELS})
+
+
+@app.post("/analysis/quality-report")
+def quality_report_markdown():
+    payload = _json_body()
+    analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
+    report = analysis.get("data_quality")
+    if not isinstance(report, dict):
+        raise ApiError(400, "No data-quality report to export. Analyze a dataset first.")
+    name = str(payload.get("dataset_name") or analysis.get("dataset_name") or "dataset")
+    filename = f"{name.replace(' ', '_').replace('/', '-')}_data_quality.md"
+    return Response(
+        quality_markdown(report, name),
+        mimetype="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.post("/analysis/notebook")
 def export_analysis_notebook():
+    """Build the reproducible Jupyter notebook: load -> quality -> replayed cleaning -> stats ->
+    charts -> tests -> model -> findings. Uses the server-cached dataframes (current + original)
+    so the in-app transform log can be replayed exactly; falls back to the preview if expired."""
     payload = _json_body()
-    analysis = payload.get("analysis") or {}
+    analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
     title = str(payload.get("title") or analysis.get("dataset_name") or "Dataset analysis")
-    findings = payload.get("findings") or []
-    return jsonify(build_notebook(title, findings, analysis))
+    findings = payload.get("findings") if isinstance(payload.get("findings"), list) else []
+    charts = payload.get("charts") if isinstance(payload.get("charts"), list) else []
+    transform_log = payload.get("transform_log") if isinstance(payload.get("transform_log"), list) else []
+    dataset = payload.get("dataset") if isinstance(payload.get("dataset"), dict) else {}
+    dataset_id = payload.get("dataset_id") or dataset.get("dataset_id")
+
+    df = workspace_cache.get(str(dataset_id)) if dataset_id else None
+    original = workspace_cache.get(_original_cache_key(str(dataset_id))) if dataset_id else None
+    if df is not None and original is None:
+        original = df
+    if df is not None:
+        dataset = {**dataset, "dataset_id": str(dataset_id)}
+    try:
+        notebook = build_notebook(title, findings, analysis, df=df, original_df=original,
+                                  transform_log=transform_log, dataset=dataset, charts=charts)
+    except Exception as exc:
+        raise ApiError(500, f"Could not build the notebook: {exc}") from exc
+    return jsonify(notebook)
 
 
 @app.post("/analysis/question")

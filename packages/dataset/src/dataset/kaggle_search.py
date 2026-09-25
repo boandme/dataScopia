@@ -205,6 +205,7 @@ def search_kaggle_datasets(query: str, max_results: int = 60) -> list[dict[str, 
                         "subtitle": getattr(item, "subtitle", None) or metadata.get("subtitle"),
                         "url": getattr(item, "url", None) or metadata.get("url"),
                         "size": getattr(item, "size", None) or metadata.get("size"),
+                        "license": getattr(item, "license_name", None) or metadata.get("license_name") or metadata.get("licenseName") or "",
                         "is_demo": False,
                     }
                 )

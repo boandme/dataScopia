@@ -5,6 +5,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from . import quality as quality_mod
+from . import recommend as recommend_mod
+from . import schema as schema_mod
+
 
 NUMERIC_DTYPES = {"int64", "int32", "float64", "float32", "int16", "float16"}
 
@@ -17,22 +21,26 @@ def _safe_float(value: Any) -> float:
 
 
 def _infer_column_type(series: pd.Series) -> str:
-    non_null = series.dropna()
-    if non_null.empty:
+    """Coarse type of one column (kept for callers that only have a Series). The real
+    classification - roles such as identifier, year, country, ordinal - lives in ``schema``."""
+    if series.dropna().empty:
         return "unknown"
-    if pd.api.types.is_datetime64_any_dtype(series):
-        return "datetime"
-    # Must come before is_numeric_dtype: pandas treats bool as a numeric subtype, so
-    # is_numeric_dtype(bool_series) is True. Checking numeric first would silently
-    # misclassify boolean columns as "numeric", sending them into IQR/quantile math where
-    # `q1 - 1.5 * iqr` on boolean values raises "numpy boolean subtract... not supported".
-    if pd.api.types.is_bool_dtype(series):
-        return "boolean"
-    if pd.api.types.is_numeric_dtype(series):
-        return "numeric"
-    if series.nunique() <= 20 and series.astype(str).str.len().mean() < 25:
-        return "categorical"
-    return "text"
+    profile = schema_mod.classify_column(str(series.name), series)
+    return schema_mod.legacy_type(profile["role"], profile["dtype"], profile.get("notes", {}))
+
+
+def _measure_frame(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """The numeric view of the measure columns, reading text like '$1,299' as numbers."""
+    data: dict[str, pd.Series] = {}
+    for column in columns:
+        series = df[column]
+        if pd.api.types.is_bool_dtype(series):
+            data[column] = series.astype(float)
+        elif pd.api.types.is_numeric_dtype(series):
+            data[column] = series
+        else:
+            data[column] = schema_mod.coerce_numeric(series)
+    return pd.DataFrame(data, index=df.index)
 
 
 def _rank_numeric_relationships(df: pd.DataFrame, numeric_cols: list[str], top_n: int = 5) -> list[dict[str, Any]]:
@@ -45,26 +53,9 @@ def _rank_numeric_relationships(df: pd.DataFrame, numeric_cols: list[str], top_n
             value = corr.loc[col_a, col_b]
             if pd.isna(value):
                 continue
-            results.append(
-                {
-                    "column_a": col_a,
-                    "column_b": col_b,
-                    "correlation": round(float(value), 4),
-                }
-            )
+            results.append({"column_a": col_a, "column_b": col_b, "correlation": round(float(value), 4)})
     results.sort(key=lambda item: abs(item["correlation"]), reverse=True)
     return results[:top_n]
-
-
-def _suggest_target_candidates(df: pd.DataFrame, numeric_cols: list[str], categorical_cols: list[str]) -> list[str]:
-    candidates: list[str] = []
-    for col in numeric_cols:
-        if df[col].nunique() > 2 and df[col].nunique() < min(df.shape[0], 100):
-            candidates.append(col)
-    for col in categorical_cols:
-        if df[col].nunique() > 2 and df[col].nunique() < min(df.shape[0], 50):
-            candidates.append(col)
-    return candidates[:10]
 
 
 def _count_skewed_fields(df: pd.DataFrame, numeric_cols: list[str]) -> list[str]:
@@ -79,64 +70,37 @@ def _count_skewed_fields(df: pd.DataFrame, numeric_cols: list[str]) -> list[str]
     return skewed
 
 
-def _suggest_visualizations(df: pd.DataFrame, numeric_cols: list[str], categorical_cols: list[str], datetime_cols: list[str]) -> list[dict[str, Any]]:
-    recommended: list[dict[str, Any]] = []
-    if numeric_cols:
-        main_numeric = numeric_cols[0]
-        recommended.append({
-            "type": "histogram",
-            "title": f"Distribution of {main_numeric}",
-            "x": main_numeric,
-            "reason": "Shows central tendency and skewness in a key variable.",
-        })
-    if len(numeric_cols) >= 2:
-        first, second = numeric_cols[:2]
-        recommended.append({
-            "type": "scatter",
-            "title": f"{first} vs {second}",
-            "x": first,
-            "y": second,
-            "reason": "Useful for assessing pairwise relationships and outliers.",
-        })
-    if numeric_cols and len(numeric_cols) > 1:
-        recommended.append({
-            "type": "correlation_heatmap",
-            "title": "Correlation heatmap",
-            "columns": numeric_cols[:10],
-            "reason": "Highlights strong numerical relationships in the dataset.",
-        })
-    if categorical_cols:
-        cat_col = categorical_cols[0]
-        recommended.append({
-            "type": "bar",
-            "title": f"Counts by {cat_col}",
-            "x": cat_col,
-            "y": "count",
-            "reason": "Summarizes category frequency and concentration patterns.",
-        })
-        if numeric_cols:
-            recommended.append({
-                "type": "box", "title": f"{numeric_cols[0]} by {cat_col}",
-                "x": cat_col, "y": numeric_cols[0],
-                "reason": "Compares spread and outliers across categories.",
-            })
-    if len(categorical_cols) >= 2:
-        recommended.append({
-            "type": "stacked_bar", "title": f"{categorical_cols[0]} by {categorical_cols[1]}",
-            "x": categorical_cols[0], "y": categorical_cols[1],
-            "reason": "Shows composition across two categorical dimensions.",
-        })
-    if datetime_cols:
-        dt_col = datetime_cols[0]
-        if numeric_cols:
-            recommended.append({
-                "type": "line",
-                "title": f"{dt_col} vs {numeric_cols[0]}",
-                "x": dt_col,
-                "y": numeric_cols[0],
-                "reason": "Useful when the dataset has time structure or temporal trends.",
-            })
-    return recommended[:8]
+def _research_questions(schema: dict[str, Any], recs: list[dict[str, Any]], targets: list[dict[str, Any]], correlations: list[dict[str, Any]]) -> list[str]:
+    questions: list[str] = []
+    by_type = {}
+    for rec in recs:
+        by_type.setdefault(rec["type"], rec)
+    if "timeseries" in by_type:
+        rec = by_type["timeseries"]
+        questions.append(f"How has {rec['y']} changed over {rec['x']}, and is the change steady or driven by a few periods?")
+    if "map" in by_type and by_type["map"].get("y"):
+        rec = by_type["map"]
+        questions.append(f"Which places have the highest and lowest {rec['y']}, and what do the top ones have in common?")
+    if targets:
+        target = targets[0]["column"]
+        target_recs = [r for r in recs if r["type"] == "target" and r.get("y") == target]
+        if target_recs:
+            questions.append(f"What best predicts {target}? ({target_recs[0]['x']} looks like the strongest lead.)")
+        else:
+            questions.append(f"Which columns are associated with {target}?")
+    for rec in recs:
+        if rec["type"] == "distribution" and rec.get("group"):
+            measure, grouper = rec["x"], rec["group"]
+        elif rec["type"] == "box" and rec.get("x") and rec.get("y"):
+            measure, grouper = rec["y"], rec["x"]
+        else:
+            continue
+        questions.append(f"Why does {measure} differ across {grouper}, and is that difference practically meaningful?")
+        break
+    if correlations and abs(correlations[0]["correlation"]) >= 0.3:
+        strongest = correlations[0]
+        questions.append(f"What explains the relationship between {strongest['column_a']} and {strongest['column_b']}?")
+    return questions[:6]
 
 
 def analyze_dataframe(
@@ -150,19 +114,24 @@ def analyze_dataframe(
         for column in columns
     }
 
-    type_summary = {}
-    for column in columns:
-        type_summary[column] = _infer_column_type(df[column])
+    schema = schema_mod.build_schema(df)
+    profiles = schema["profiles"]
+    type_summary = {column: profiles[column]["type"] for column in columns}
 
-    numeric_cols = [column for column, dtype in type_summary.items() if dtype == "numeric"]
-    categorical_cols = [column for column, dtype in type_summary.items() if dtype == "categorical"]
-    datetime_cols = [column for column, dtype in type_summary.items() if dtype == "datetime"]
+    measure_cols = list(schema["measures"])
+    continuous_cols = [c for c in measure_cols if profiles[c]["role"] == "numeric"]
+    categorical_cols = [c for c in columns if profiles[c]["role"] in {"categorical", "ordinal", "geo_country", "geo_state"}
+                        or (profiles[c]["role"] == "binary" and not pd.api.types.is_bool_dtype(df[c]))]
+    datetime_cols = [c for c in columns if profiles[c]["role"] == "datetime"]
+    numeric_cols = measure_cols
 
-    duplicate_rows = int(df.duplicated().sum())
+    work = _measure_frame(df, measure_cols)
+
+    duplicate_rows = int(df.duplicated().sum()) if not df.empty else 0
     missing_cells = int(df.isna().sum().sum())
     outlier_count = 0
-    for column in numeric_cols:
-        s = df[column].dropna()
+    for column in continuous_cols:
+        s = work[column].dropna()
         if s.empty:
             continue
         q1 = s.quantile(0.25)
@@ -171,11 +140,18 @@ def analyze_dataframe(
         lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
         outlier_count += int(((s < lower) | (s > upper)).sum())
 
-    relation_summary = _rank_numeric_relationships(df, numeric_cols)
-    skewed_fields = _count_skewed_fields(df, numeric_cols)
-    correlations = relation_summary
-    target_candidates = _suggest_target_candidates(df, numeric_cols, categorical_cols)
-    recommendations = _suggest_visualizations(df, numeric_cols, categorical_cols, datetime_cols)
+    relationship_summary = _rank_numeric_relationships(work, measure_cols)
+    skewed_fields = _count_skewed_fields(work, continuous_cols)
+    correlations = relationship_summary
+
+    targets = recommend_mod.suggest_targets(df, schema)
+    target_candidates = [t["column"] for t in targets]
+    recommendations = recommend_mod.recommend_visualizations(df, schema, correlations, targets, skewed_fields, missing_by_column)
+
+    quality_report = quality_mod.build_quality_report(df, schema, targets)
+    data_quality_issues = [f"{issue['title']}. {issue['detail']}" for issue in quality_report["issues"] if issue["severity"] in {"high", "medium"}]
+    if not measure_cols:
+        data_quality_issues.append("No numeric columns were detected; summary statistics may be limited.")
 
     insights: list[str] = []
     if sample_info and sample_info.get("is_sample"):
@@ -192,49 +168,40 @@ def analyze_dataframe(
             f"This analysis is based on a {sample_mb} sample ({rows:,} rows){estimate_note}. "
             "Run a full analysis or download the dataset for complete results."
         )
+    insights.extend(recommend_mod.describe_structure(schema))
     if duplicate_rows:
         insights.append(f"{duplicate_rows} duplicate rows were detected.")
     if missing_cells:
         insights.append(f"{missing_cells} missing values were found across the dataset.")
     if skewed_fields:
         insights.append(f"Highly skewed variables were detected: {', '.join(skewed_fields[:5])}.")
-    if target_candidates:
-        insights.append(f"Potential target or label-like columns include: {', '.join(target_candidates[:5])}.")
+    if targets:
+        top = targets[0]
+        insights.append(f"Most likely target: '{top['column']}' ({top['kind']}) - {top['reason']}.")
     if correlations:
         strongest = correlations[0]
         insights.append(
             f"The strongest numeric relationship is between {strongest['column_a']} and {strongest['column_b']} (r = {strongest['correlation']})."
         )
 
-    data_quality_issues: list[str] = []
-    for column, pct in sorted(missing_by_column.items(), key=lambda item: item[1], reverse=True):
-        if pct > 20:
-            data_quality_issues.append(f"{column} has {pct}% missing values.")
-    if duplicate_rows:
-        data_quality_issues.append(f"{duplicate_rows} duplicate rows may affect downstream analysis.")
-    if not numeric_cols:
-        data_quality_issues.append("No numeric columns were detected; summary statistics may be limited.")
-
-    constant_columns = [column for column in columns if df[column].nunique(dropna=False) <= 1]
-    high_cardinality_columns = [column for column in columns if df[column].nunique(dropna=True) > max(50, rows * 0.8)]
-    numeric_summary = {
-        column: {
-            "mean": round(float(df[column].mean()), 4),
-            "median": round(float(df[column].median()), 4),
-            "min": round(float(df[column].min()), 4),
-            "max": round(float(df[column].max()), 4),
+    constant_columns = [column for column in columns if profiles[column]["role"] in {"constant", "empty"}]
+    high_cardinality_columns = [column for column in columns if profiles[column]["unique_count"] > max(50, rows * 0.8)]
+    numeric_summary = {}
+    for column in columns:
+        if profiles[column]["role"] not in schema_mod.MEASURE_ROLES | {"year", "geo_lat", "geo_lon"}:
+            continue
+        values = _measure_frame(df, [column])[column].dropna()
+        if values.empty:
+            continue
+        numeric_summary[column] = {
+            "mean": round(float(values.mean()), 4),
+            "median": round(float(values.median()), 4),
+            "min": round(float(values.min()), 4),
+            "max": round(float(values.max()), 4),
         }
-        for column in numeric_cols
-        if not df[column].dropna().empty
-    }
-    research_questions = []
-    if categorical_cols and numeric_cols:
-        research_questions.append(f"How does {numeric_cols[0]} vary across {categorical_cols[0]}?")
-    if correlations:
-        research_questions.append(f"What explains the relationship between {correlations[0]['column_a']} and {correlations[0]['column_b']}?")
-    if datetime_cols and numeric_cols:
-        research_questions.append(f"How does {numeric_cols[0]} change over {datetime_cols[0]}?")
+    research_questions = _research_questions(schema, recommendations, targets, correlations)
 
+    role_counts = schema["role_counts"]
     research_snapshot = {
         "dataset_name": dataset_name,
         "rows": rows,
@@ -244,14 +211,20 @@ def analyze_dataframe(
         "missing_columns": sum(1 for v in missing_by_column.values() if v > 0),
         "highly_skewed_fields": len(skewed_fields),
         "potential_targets": len(target_candidates),
-        "notable_relationships": len(correlations),
-        "data_quality_issues": len(data_quality_issues),
+        "notable_relationships": len([r for r in correlations if abs(r["correlation"]) >= 0.3]),
+        "data_quality_issues": len(quality_report["issues"]),
         "recommended_visualizations": len(recommendations),
-        "numeric_fields": len(numeric_cols),
+        "numeric_fields": len(measure_cols),
         "categorical_fields": len(categorical_cols),
         "datetime_fields": len(datetime_cols),
+        "identifier_fields": role_counts.get("identifier", 0),
+        "text_fields": role_counts.get("text", 0),
+        "geo_fields": sum(1 for v in schema["geo"].values() if v),
+        "has_time_series": bool(schema["time"]),
+        "join_key_candidates": len(schema["join_keys"]),
         "constant_columns": len(constant_columns),
         "high_cardinality_columns": len(high_cardinality_columns),
+        "quality_score": quality_report["score"],
         "is_sample": bool(sample_info and sample_info.get("is_sample")),
         "estimated_total_rows": (sample_info or {}).get("estimated_total_rows"),
     }
@@ -263,8 +236,11 @@ def analyze_dataframe(
             {
                 "name": column,
                 "type": type_summary[column],
+                "role": profiles[column]["role"],
+                "role_label": profiles[column]["role_label"],
+                "notes": profiles[column].get("notes", {}),
                 "missing_pct": round(float(missing_by_column[column]), 2),
-                "unique_count": int(df[column].nunique(dropna=True)),
+                "unique_count": int(profiles[column]["unique_count"]),
             }
             for column in columns
         ],
@@ -279,13 +255,22 @@ def analyze_dataframe(
         "relationship_summary": correlations,
         "skewed_fields": skewed_fields,
         "target_candidates": target_candidates,
+        "target_details": targets,
         "research_snapshot": research_snapshot,
         "recommendations": recommendations,
         "insights": insights,
         "data_quality_issues": data_quality_issues,
+        "data_quality": quality_report,
         "constant_columns": constant_columns,
         "high_cardinality_columns": high_cardinality_columns,
         "numeric_summary": numeric_summary,
         "research_questions": research_questions,
+        "schema": {
+            "roles": {c: {"role": p["role"], "role_label": p["role_label"], "notes": p.get("notes", {}), "unique_count": p["unique_count"]} for c, p in profiles.items()},
+            "geo": schema["geo"],
+            "time": schema["time"],
+            "join_keys": schema["join_keys"],
+            "role_counts": role_counts,
+        },
         "sample": sample_info,
     }
