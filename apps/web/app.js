@@ -12,6 +12,7 @@ const state = {
   slug: null,
   findings: [],
   transformLog: [],          // [{type, params, description}] - replayed by the notebook export
+  projectName: null,         // whatever the user last named this analysis - export titles default to it
 };
 
 const searchInput = document.getElementById('search-input');
@@ -201,6 +202,7 @@ function chartConfigOf(slot) {
 // server-side copy has expired or the request fails, so a chart never just disappears.
 async function renderChart(slot) {
   if (!state.analysis) return;
+  window.markProjectDirty?.();
   const token = (slot.renderToken = (slot.renderToken || 0) + 1);
   if (state.dataset?.dataset_id) {
     try {
@@ -235,6 +237,7 @@ function drawServerChart(slot, result) {
   slot.notesEl.hidden = notes.length === 0;
   slot.notesEl.innerHTML = notes.map((note) => `<p>${escapeHtml(note)}</p>`).join('');
   slot.card.dataset.effectiveType = meta.effective_type || slot.type.value;
+  slot.serverTitle = meta.title || '';
   updateGranularityVisibility(slot);
 }
 
@@ -491,7 +494,7 @@ function renderRecommendations() {
   const grid = document.getElementById('recs-grid');
   panel.hidden = recs.length === 0;
   grid.innerHTML = recs.map((rec, index) => `
-    <div class="rec-card">
+    <div class="rec-card" data-family="${escapeHtml(rec.family || 'other')}">
       <span class="chip rec-family">${escapeHtml(FAMILY_LABELS[rec.family] || rec.family || 'Chart')}</span>
       <strong>${escapeHtml(rec.title || rec.type)}</strong>
       <p>${escapeHtml(rec.reason || '')}</p>
@@ -785,6 +788,7 @@ async function performTransform(type, params) {
 }
 
 function renderTransformLog() {
+  window.markProjectDirty?.();
   if (!state.transformLog.length) {
     transformLogEl.hidden = true;
     transformLogEl.innerHTML = '';
@@ -922,23 +926,428 @@ function renderQualityPanel() {
   }
 }
 
-async function downloadQualityReport() {
-  if (!state.analysis) return;
-  const response = await fetch(`${API_BASE}/analysis/quality-report`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({analysis: {data_quality: state.analysis.data_quality, dataset_name: state.analysis.dataset_name}, dataset_name: state.analysis.dataset_name}),
+// ---- Export page: every export has a file name and its own customization panel. Choices are
+// remembered in this browser (localStorage) and sent to the server as an `options` object, which
+// validates them again - the browser is never trusted to send sane values.
+
+const EXPORT_PREFS_KEY = 'datascopia.exportPrefs.v2';
+const EXPORT_DEFAULTS = {
+  notebook: {
+    filename: '', title: '', author: '', notes: '',
+    sections: {quality: true, cleaning: true, structure: true, summary: true, visualizations: true, statistics: true, modelling: true, findings: true, conclusions: true},
+    embed_rows: 10000, chart_source: 'both', max_charts: 12,
+    ml: {test_size: 0.25, seed: 42, trees: 200},
+  },
+  pdf: {
+    filename: '', title: '', subtitle: '', author: '', organization: '', notes: '', footer: '',
+    detail: 'deep', theme: 'indigo', page_size: 'letter', font_size: 'normal',
+    sections: {introduction: true, methods: true, quality: true, results: true, discussion: true, conclusions: true, references: true, appendices: true},
+    include_charts: true, include_hypotheses: true, include_evidence: true, include_figures_native: true,
+  },
+  quality: {
+    filename: '', format: 'md', title: '', author: '', notes: '',
+    severities: {high: true, medium: true, low: true}, include_why: true, include_examples: true, include_fixes: true, group_by: 'category',
+  },
+};
+
+function deepMerge(base, extra) {
+  const out = Array.isArray(base) ? [...base] : {...base};
+  if (!extra || typeof extra !== 'object') return out;
+  Object.keys(base).forEach((key) => {
+    if (!(key in extra)) return;
+    if (base[key] && typeof base[key] === 'object' && !Array.isArray(base[key])) out[key] = deepMerge(base[key], extra[key]);
+    else if (typeof extra[key] === typeof base[key]) out[key] = extra[key];
   });
-  if (!response.ok) return;
-  const blob = await response.blob();
+  return out;
+}
+
+function loadExportPrefs() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(EXPORT_PREFS_KEY) || '{}') || {}; } catch (error) { saved = {}; }
+  const prefs = {};
+  Object.keys(EXPORT_DEFAULTS).forEach((form) => { prefs[form] = deepMerge(EXPORT_DEFAULTS[form], saved[form]); });
+  return prefs;
+}
+const exportPrefs = loadExportPrefs();
+function saveExportPrefs() {
+  try { localStorage.setItem(EXPORT_PREFS_KEY, JSON.stringify(exportPrefs)); } catch (error) { /* private browsing */ }
+}
+
+function getPath(obj, path) { return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj); }
+function setPath(obj, path, value) {
+  const keys = path.split('.');
+  const last = keys.pop();
+  const target = keys.reduce((o, k) => o[k], obj);
+  target[last] = value;
+}
+
+const THEME_SWATCHES = [['indigo', '#4338ca'], ['teal', '#0f766e'], ['slate', '#334155'], ['crimson', '#be123c'], ['forest', '#15803d']];
+const EXPORT_FORMS = [
+  {
+    id: 'notebook', title: 'Jupyter notebook', button: 'export-notebook-btn', action: 'Export notebook',
+    blurb: 'A runnable notebook: data loading, quality audit, your exact cleaning steps, charts, statistical tests and a baseline model.',
+    ext: () => '.ipynb', defaultName: (n) => `${n}_analysis`,
+    fields: [
+      {kind: 'text', path: 'title', label: 'Notebook title', placeholder: (n) => `${n} analysis`},
+      {kind: 'text', path: 'author', label: 'Author', placeholder: 'Your name (optional)'},
+      {kind: 'textarea', path: 'notes', label: 'Note for readers', placeholder: 'Context shown under the title, e.g. the question being explored'},
+      {kind: 'checks', path: 'sections', label: 'Include sections', options: [['quality', 'Quality audit'], ['cleaning', 'Cleaning steps'], ['structure', 'Column structure'], ['summary', 'Summary statistics'],
+        ['visualizations', 'Visualizations'], ['statistics', 'Statistical tests'], ['modelling', 'Predictive model'], ['findings', 'Saved findings'], ['conclusions', 'Conclusions']]},
+      {kind: 'select', path: 'embed_rows', label: 'Embedded data snapshot', number: true, options: [[10000, 'Up to 10,000 rows (runs anywhere)'], [5000, 'Up to 5,000 rows'], [1000, 'Up to 1,000 rows'], [0, 'None - notebook needs the data file']]},
+      {kind: 'select', path: 'chart_source', label: 'Charts to include', options: [['both', 'Workspace + recommended'], ['workspace', 'Workspace charts only'], ['recommended', 'Recommended charts only']]},
+      {kind: 'number', path: 'max_charts', label: 'Maximum charts', min: 1, max: 30, step: 1},
+      {kind: 'group', label: 'Predictive model settings', fields: [
+        {kind: 'select', path: 'ml.test_size', label: 'Held-out share', number: true, options: [[0.2, '20%'], [0.25, '25%'], [0.3, '30%']]},
+        {kind: 'number', path: 'ml.trees', label: 'Trees', min: 20, max: 600, step: 10},
+        {kind: 'number', path: 'ml.seed', label: 'Random seed', min: 0, max: 99999, step: 1},
+      ]},
+    ],
+    summary: (p) => `${Object.values(p.sections).filter(Boolean).length}/9 sections · ${p.embed_rows ? `${p.embed_rows.toLocaleString()}-row snapshot` : 'no embedded data'} · ${p.max_charts} charts max`,
+  },
+  {
+    id: 'pdf', title: 'PDF research report', button: 'export-report-btn', action: 'Export report (PDF)',
+    blurb: 'A shareable report: executive summary, methods, deep results and interpretation, evidence ratings, references.',
+    ext: () => '.pdf', defaultName: (n) => `${n}_report`,
+    fields: [
+      {kind: 'text', path: 'title', label: 'Report title', placeholder: (n) => n},
+      {kind: 'text', path: 'subtitle', label: 'Subtitle', placeholder: 'e.g. Quarterly review, wave 2'},
+      {kind: 'text', path: 'author', label: 'Author', placeholder: 'Your name'},
+      {kind: 'text', path: 'organization', label: 'Organization', placeholder: 'Team, school or company'},
+      {kind: 'textarea', path: 'notes', label: "Analyst's note (shown in the introduction)", placeholder: 'Why this analysis was run, who it is for, or caveats you want readers to see first'},
+      {kind: 'segmented', path: 'detail', label: 'Level of detail', options: [['brief', 'Brief'], ['standard', 'Standard'], ['deep', 'Deep']],
+        hint: 'Brief: key tables and conclusions. Standard: adds robustness checks. Deep: adds post-hoc tests, trends, diagnostics and per-chart analysis.'},
+      {kind: 'swatches', path: 'theme', label: 'Colour theme', options: THEME_SWATCHES},
+      {kind: 'segmented', path: 'page_size', label: 'Page size', options: [['letter', 'US Letter'], ['a4', 'A4']]},
+      {kind: 'segmented', path: 'font_size', label: 'Text size', options: [['compact', 'Compact'], ['normal', 'Normal'], ['large', 'Large']]},
+      {kind: 'checks', path: 'sections', label: 'Include sections', options: [['introduction', 'Introduction'], ['methods', 'Methods'], ['quality', 'Data quality'], ['results', 'Results'],
+        ['discussion', 'Discussion'], ['conclusions', 'Conclusions'], ['references', 'References'], ['appendices', 'Appendices']]},
+      {kind: 'toggle', path: 'include_charts', label: 'Include my workspace charts (with analysis)'},
+      {kind: 'toggle', path: 'include_figures_native', label: 'Include built-in figures (distributions, missing data, correlation matrix)'},
+      {kind: 'toggle', path: 'include_hypotheses', label: 'State testable hypotheses'},
+      {kind: 'toggle', path: 'include_evidence', label: 'Include the evidence-rating table'},
+      {kind: 'text', path: 'footer', label: 'Footer text', placeholder: 'e.g. Confidential - internal use'},
+    ],
+    summary: (p) => `${p.detail} detail · ${p.theme} · ${p.page_size === 'a4' ? 'A4' : 'Letter'} · ${Object.values(p.sections).filter(Boolean).length}/8 sections`,
+  },
+  {
+    id: 'quality', title: 'Data quality report', button: 'export-quality-btn', action: 'Download report',
+    blurb: 'The scored audit and its suggested fixes, in the format you need.',
+    ext: (p) => `.${p.format}`, defaultName: (n) => `${n}_data_quality`,
+    fields: [
+      {kind: 'segmented', path: 'format', label: 'Format', options: [['md', 'Markdown'], ['json', 'JSON'], ['csv', 'CSV']]},
+      {kind: 'text', path: 'title', label: 'Title', placeholder: (n) => `Data quality report: ${n}`},
+      {kind: 'text', path: 'author', label: 'Author', placeholder: 'Your name (optional)'},
+      {kind: 'textarea', path: 'notes', label: 'Note', placeholder: 'Context for whoever receives this report'},
+      {kind: 'checks', path: 'severities', label: 'Severities to include', options: [['high', 'High'], ['medium', 'Medium'], ['low', 'Low']]},
+      {kind: 'toggle', path: 'include_why', label: 'Explain why each issue matters'},
+      {kind: 'toggle', path: 'include_examples', label: 'Show example values'},
+      {kind: 'toggle', path: 'include_fixes', label: 'Show suggested fixes'},
+      {kind: 'segmented', path: 'group_by', label: 'Group issues by', options: [['category', 'Category'], ['severity', 'Severity']]},
+    ],
+    summary: (p) => `${p.format.toUpperCase()} · ${Object.entries(p.severities).filter(([, v]) => v).map(([k]) => k).join(', ') || 'no severities'}`,
+  },
+];
+
+function datasetLabel() {
+  return (state.analysis?.dataset_name || 'dataset').replace(/[^A-Za-z0-9_-]+/g, '_');
+}
+
+function fieldHtml(form, field) {
+  const prefs = exportPrefs[form.id];
+  const name = datasetLabel();
+  const value = field.path ? getPath(prefs, field.path) : undefined;
+  const ph = typeof field.placeholder === 'function' ? field.placeholder(name) : (field.placeholder || '');
+  const path = field.path ? `data-form="${form.id}" data-path="${field.path}"` : '';
+  switch (field.kind) {
+    case 'text':
+      return `<label class="ef"><span>${escapeHtml(field.label)}</span><input type="text" ${path} value="${escapeHtml(value || '')}" placeholder="${escapeHtml(ph)}" maxlength="140" /></label>`;
+    case 'textarea':
+      return `<label class="ef ef-wide"><span>${escapeHtml(field.label)}</span><textarea ${path} rows="2" maxlength="1500" placeholder="${escapeHtml(ph)}">${escapeHtml(value || '')}</textarea></label>`;
+    case 'number':
+      return `<label class="ef"><span>${escapeHtml(field.label)}</span><input type="number" ${path} value="${escapeHtml(value)}" min="${field.min}" max="${field.max}" step="${field.step}" /></label>`;
+    case 'select':
+      return `<label class="ef"><span>${escapeHtml(field.label)}</span><select ${path} ${field.number ? 'data-number="1"' : ''}>${field.options.map(([v, l]) => `<option value="${escapeHtml(v)}" ${String(v) === String(value) ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}</select></label>`;
+    case 'checks':
+      return `<fieldset class="ef ef-wide ef-checks"><legend>${escapeHtml(field.label)}</legend>${field.options.map(([k, l]) => `<label class="ef-check"><input type="checkbox" data-form="${form.id}" data-path="${field.path}.${k}" ${value?.[k] ? 'checked' : ''} /> ${escapeHtml(l)}</label>`).join('')}</fieldset>`;
+    case 'toggle':
+      return `<label class="ef ef-wide ef-toggle"><input type="checkbox" ${path} ${value ? 'checked' : ''} /> <span>${escapeHtml(field.label)}</span></label>`;
+    case 'segmented':
+      return `<div class="ef ef-wide"><span class="ef-label">${escapeHtml(field.label)}</span><div class="seg" role="radiogroup" data-form="${form.id}" data-seg="${field.path}">${field.options.map(([v, l]) => `<button type="button" role="radio" aria-checked="${v === value}" class="${v === value ? 'on' : ''}" data-value="${escapeHtml(v)}">${escapeHtml(l)}</button>`).join('')}</div>${field.hint ? `<small class="ef-hint">${escapeHtml(field.hint)}</small>` : ''}</div>`;
+    case 'swatches':
+      return `<div class="ef ef-wide"><span class="ef-label">${escapeHtml(field.label)}</span><div class="seg swatches" role="radiogroup" data-form="${form.id}" data-seg="${field.path}">${field.options.map(([v, c]) => `<button type="button" role="radio" aria-checked="${v === value}" title="${escapeHtml(v)}" class="${v === value ? 'on' : ''}" data-value="${escapeHtml(v)}" style="--sw:${c}"><i></i>${escapeHtml(v)}</button>`).join('')}</div></div>`;
+    case 'group':
+      return `<fieldset class="ef ef-wide ef-group"><legend>${escapeHtml(field.label)}</legend><div class="ef-grid">${field.fields.map((f) => fieldHtml(form, f)).join('')}</div></fieldset>`;
+    default:
+      return '';
+  }
+}
+
+function renderExportForms() {
+  const grid = document.getElementById('export-grid');
+  if (!grid) return;
+  const name = datasetLabel();
+  grid.innerHTML = EXPORT_FORMS.map((form) => {
+    const prefs = exportPrefs[form.id];
+    return `
+      <div class="panel export-card" data-export="${form.id}">
+        <div class="export-card-head">
+          <h3>${escapeHtml(form.title)}</h3>
+          <button type="button" class="ef-reset" data-reset="${form.id}" title="Restore the default settings">Reset</button>
+        </div>
+        <p class="hint">${escapeHtml(form.blurb)}</p>
+        <label class="ef ef-filename"><span>File name</span>
+          <span class="ef-file"><input type="text" data-form="${form.id}" data-path="filename" value="${escapeHtml(prefs.filename || '')}" placeholder="${escapeHtml(form.defaultName(name))}" maxlength="90" /><b class="ext" data-ext="${form.id}">${escapeHtml(form.ext(prefs))}</b></span>
+        </label>
+        <details class="ef-details" ${prefs.__open ? 'open' : ''} data-details="${form.id}">
+          <summary>Customize<span class="ef-summary" data-summary="${form.id}">${escapeHtml(form.summary(prefs))}</span></summary>
+          <div class="ef-grid">${form.fields.map((f) => fieldHtml(form, f)).join('')}</div>
+        </details>
+        <button type="button" class="btn" id="${form.button}" data-export-action="${form.id}">${escapeHtml(form.action)}</button>
+      </div>`;
+  }).join('');
+}
+
+function refreshExportSummaries() {
+  EXPORT_FORMS.forEach((form) => {
+    const summary = document.querySelector(`[data-summary="${form.id}"]`);
+    if (summary) summary.textContent = form.summary(exportPrefs[form.id]);
+    const ext = document.querySelector(`[data-ext="${form.id}"]`);
+    if (ext) ext.textContent = form.ext(exportPrefs[form.id]);
+  });
+}
+
+(function bindExportForms() {
+  const grid = document.getElementById('export-grid');
+  if (!grid) return;
+  const apply = (el) => {
+    const form = el.dataset.form;
+    const path = el.dataset.path;
+    if (!form || !path) return;
+    let value;
+    if (el.type === 'checkbox') value = el.checked;
+    else if (el.type === 'number' || el.dataset.number) {
+      value = Number(el.value);
+      if (Number.isNaN(value)) return;
+    } else value = el.value;
+    setPath(exportPrefs[form], path, value);
+    saveExportPrefs();
+    refreshExportSummaries();
+  };
+  grid.addEventListener('input', (event) => { if (event.target.matches('input[type=text], textarea, input[type=number]')) apply(event.target); });
+  grid.addEventListener('change', (event) => { if (event.target.matches('input[type=checkbox], select')) apply(event.target); });
+  grid.addEventListener('click', (event) => {
+    const seg = event.target.closest('.seg button');
+    if (seg) {
+      const holder = seg.closest('.seg');
+      setPath(exportPrefs[holder.dataset.form], holder.dataset.seg, seg.dataset.value);
+      holder.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b === seg); b.setAttribute('aria-checked', String(b === seg)); });
+      saveExportPrefs();
+      refreshExportSummaries();
+      return;
+    }
+    const reset = event.target.closest('[data-reset]');
+    if (reset) {
+      exportPrefs[reset.dataset.reset] = JSON.parse(JSON.stringify(EXPORT_DEFAULTS[reset.dataset.reset]));
+      saveExportPrefs();
+      renderExportForms();
+      return;
+    }
+    const action = event.target.closest('[data-export-action]');
+    if (action) startExport(action.dataset.exportAction);
+  });
+  grid.addEventListener('toggle', (event) => {
+    const details = event.target.closest?.('[data-details]');
+    if (details) { exportPrefs[details.dataset.details].__open = details.open; }
+  }, true);
+})();
+
+// Every export asks for a title (and confirms the file name) first, so nothing is generated
+// under an accidental default name. The answer is saved so the next export starts from it.
+const EXPORT_TITLE_COPY = {
+  notebook: {heading: 'Title your notebook', hint: 'This becomes the notebook\'s heading and its file name.', confirm: 'Export notebook', fallback: (n) => `${n} analysis`},
+  pdf: {heading: 'Title your report', hint: 'This appears on the report\'s title block and in the page headers.', confirm: 'Export report', fallback: (n) => `${n}: data analysis report`},
+  quality: {heading: 'Title your data quality report', hint: 'This becomes the report heading and its file name.', confirm: 'Download report', fallback: (n) => `Data quality report: ${n}`},
+};
+
+function fileNameFromTitle(title) {
+  return title.trim().replace(/[^A-Za-z0-9 _.-]+/g, '').replace(/\s+/g, '_').replace(/^[._]+|[._]+$/g, '').slice(0, 90);
+}
+
+function promptExportDetails(id) {
+  const copy = EXPORT_TITLE_COPY[id];
+  const form = EXPORT_FORMS.find((f) => f.id === id);
+  const prefs = exportPrefs[id];
+  const overlay = document.getElementById('export-title-overlay');
+  const titleInput = document.getElementById('export-title-input');
+  const fileInput = document.getElementById('export-title-file');
+  const errorEl = document.getElementById('export-title-error');
+  const confirmBtn = document.getElementById('export-title-confirm');
+  const cancelBtn = document.getElementById('export-title-cancel');
+  document.getElementById('export-title-heading').textContent = copy.heading;
+  document.getElementById('export-title-hint').textContent = copy.hint;
+  document.getElementById('export-title-ext').textContent = form.ext(prefs);
+  confirmBtn.textContent = copy.confirm;
+  // Default the title to whatever the user already called this analysis (the saved/cloud project
+  // name), so they aren't asked to type essentially the same name again for every export; falls
+  // back to the dataset name only when nothing has been named yet.
+  const dataset = state.projectName || state.analysis?.dataset_name || 'dataset';
+  titleInput.value = prefs.title || copy.fallback(dataset);
+  fileInput.value = prefs.filename || fileNameFromTitle(titleInput.value);
+  // Only treat the file name as "manually customized" (and stop following the title) if it actually
+  // diverges from what the current title would derive - otherwise a title carried over from a
+  // previous export (or a stale prefs.filename) would silently stop the two fields from matching.
+  let fileEdited = Boolean(prefs.filename) && prefs.filename !== fileNameFromTitle(titleInput.value);
+  errorEl.hidden = true;
+  overlay.hidden = false;
+  titleInput.focus();
+  titleInput.select();
+
+  return new Promise((resolve) => {
+    const cleanup = (result) => {
+      overlay.hidden = true;
+      titleInput.removeEventListener('input', onTitle);
+      fileInput.removeEventListener('input', onFile);
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    };
+    const onTitle = () => {
+      errorEl.hidden = true;
+      if (!fileEdited) fileInput.value = fileNameFromTitle(titleInput.value);
+    };
+    const onFile = () => { fileEdited = true; };
+    const onConfirm = () => {
+      const title = titleInput.value.trim();
+      if (!title) { errorEl.hidden = false; titleInput.focus(); return; }
+      cleanup({title, filename: fileInput.value.trim() || fileNameFromTitle(title)});
+    };
+    const onCancel = () => cleanup(null);
+    const onBackdrop = (event) => { if (event.target === overlay) cleanup(null); };
+    const onKey = (event) => {
+      if (event.key === 'Escape') cleanup(null);
+      if (event.key === 'Enter' && !overlay.hidden) { event.preventDefault(); onConfirm(); }
+    };
+    titleInput.addEventListener('input', onTitle);
+    fileInput.addEventListener('input', onFile);
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    overlay.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+  });
+}
+
+async function startExport(id) {
+  if (!state.analysis) return;
+  const details = await promptExportDetails(id);
+  if (!details) return;
+  exportPrefs[id].title = details.title;
+  exportPrefs[id].filename = details.filename;
+  saveExportPrefs();
+  // keep the card's own fields in step with what was just chosen
+  const titleField = document.querySelector(`[data-export="${id}"] input[data-path="title"]`);
+  const nameField = document.querySelector(`[data-export="${id}"] input[data-path="filename"]`);
+  if (titleField) titleField.value = details.title;
+  if (nameField) nameField.value = details.filename;
+  if (id === 'notebook') await exportNotebook();
+  else if (id === 'pdf') await exportReportPDF();
+  else await downloadQualityReport();
+}
+
+function exportPayloadOptions(form) {
+  const copy = JSON.parse(JSON.stringify(exportPrefs[form]));
+  delete copy.filename;
+  delete copy.__open;
+  return copy;
+}
+
+function saveBlobAs(blob, fallbackName, response) {
+  const name = response?.headers?.get('X-Filename') || fallbackName;
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
-  link.download = `${(state.analysis.dataset_name || 'dataset').replace(/[^a-z0-9_-]+/gi, '_')}_data_quality.md`;
+  link.download = name;
   link.click();
   URL.revokeObjectURL(link.href);
+  return name;
 }
-document.getElementById('quality-download-btn').addEventListener('click', downloadQualityReport);
-document.getElementById('export-quality-btn').addEventListener('click', downloadQualityReport);
+
+async function withBusyButton(button, busyLabel, work) {
+  const original = button ? button.textContent : '';
+  if (button) { button.disabled = true; button.textContent = busyLabel; }
+  try {
+    return await work();
+  } finally {
+    if (button) { button.disabled = false; button.textContent = original; }
+  }
+}
+
+function flashDone(button, message) {
+  if (!button) return;
+  const original = button.textContent;
+  button.textContent = message;
+  setTimeout(() => { button.textContent = original; }, 1800);
+}
+
+async function downloadQualityReport() {
+  if (!state.analysis) return;
+  const button = document.getElementById('export-quality-btn');
+  const prefs = exportPrefs.quality;
+  await withBusyButton(button, 'Preparing...', async () => {
+    const response = await fetch(`${API_BASE}/analysis/quality-report`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        analysis: {data_quality: state.analysis.data_quality, dataset_name: state.analysis.dataset_name},
+        dataset_name: state.analysis.dataset_name,
+        filename: prefs.filename,
+        options: {...exportPayloadOptions('quality'), severities: Object.entries(prefs.severities).filter(([, v]) => v).map(([k]) => k)},
+      }),
+    });
+    if (!response.ok) { alert('Could not build the data quality report.'); return; }
+    saveBlobAs(await response.blob(), `${datasetLabel()}_data_quality.${prefs.format}`, response);
+    flashDone(button, 'Downloaded ✓');
+  });
+}
+document.getElementById('quality-download-btn').addEventListener('click', () => startExport('quality'));
+
+// Reproducible notebook: the server rebuilds it from the cached data plus the exact cleaning
+// steps applied here (transformLog), the charts currently on screen and the saved findings, so
+// running it top to bottom yields the same cleaned data, charts and statistics.
+async function exportNotebook() {
+  if (!state.analysis) return;
+  const button = document.getElementById('export-notebook-btn');
+  const prefs = exportPrefs.notebook;
+  await withBusyButton(button, 'Building notebook...', async () => {
+    try {
+      const response = await fetch(`${API_BASE}/analysis/notebook`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          title: prefs.title.trim() || `${state.analysis.dataset_name || 'Dataset'} analysis`,
+          filename: prefs.filename,
+          options: exportPayloadOptions('notebook'),
+          dataset_id: state.dataset?.dataset_id,
+          dataset: state.dataset,
+          analysis: state.analysis,
+          findings: state.findings,
+          charts: chartSlots.filter((slot) => slot.x.value || slot.type.value === 'missing').map((slot) => chartConfigOf(slot)),
+          transform_log: state.transformLog.filter((entry) => entry && entry.type),
+        }),
+      });
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.detail || `Notebook export failed (${response.status}).`);
+      }
+      const notebook = await response.json();
+      saveBlobAs(new Blob([JSON.stringify(notebook, null, 1)], {type: 'application/json'}), `${datasetLabel()}_analysis.ipynb`, response);
+      flashDone(button, 'Downloaded ✓');
+    } catch (error) {
+      alert(`Could not export the notebook: ${error.message || error}`);
+    }
+  });
+}
+
 
 const TYPE_LABELS = {numeric: 'Numeric', categorical: 'Categorical', datetime: 'Datetime', boolean: 'Boolean'};
 // What each detected role means for analysis, shown in the Column Explorer.
@@ -1037,6 +1446,7 @@ function renderColumnExplorerDetail(columnName) {
 columnExplorerSelect.addEventListener('change', () => renderColumnExplorerDetail(columnExplorerSelect.value));
 
 function renderFindings() {
+  window.markProjectDirty?.();
   findingsEl.hidden = state.findings.length === 0;
   document.getElementById('findings-empty').hidden = state.findings.length > 0;
   const badge = document.getElementById('nav-findings-count');
@@ -1102,6 +1512,7 @@ function saveCurrentAnalysis(name) {
   const list = loadSavedAnalyses();
   list.unshift(buildAnalysisSnapshot(trimmedName));
   const ok = persistSavedAnalyses(list);
+  if (ok) state.projectName = trimmedName;
   return ok ? {ok: true} : {ok: false, message: 'Could not save — your browser storage may be full or unavailable (e.g. private browsing).'};
 }
 
@@ -1116,6 +1527,8 @@ function restoreSavedAnalysis(id) {
   state.dataset = item.dataset;
   state.analysis = item.analysis;
   state.slug = item.slug || null;
+  state.projectId = null;
+  state.projectName = item.name || null;
   state.findings = item.findings || [];
   // older saves stored just the description text; keep those readable (they can't be replayed)
   state.transformLog = (item.transformLog || []).map((entry) => (typeof entry === 'string' ? {description: entry} : entry));
@@ -1250,11 +1663,14 @@ async function uploadDataset() {
     state.analysis = json.analysis;
     state.slug = null;
     state.transformLog = [];
+    state.projectId = null;
+    state.projectName = null;
     resetTransformBtn.hidden = true;
     downloadFullBtn.hidden = true;
     fullAnalysisBtn.hidden = true;
     renderAnalysis();
     navigate('overview');
+    startOnboarding();
   } catch (error) {
     resultsEl.innerHTML = '<div class="result-item">Upload failed. Start the API server first.</div>';
   } finally {
@@ -1281,11 +1697,14 @@ async function loadDatasetFromSlug(slug, endpoint = '/datasets/analyze') {
   state.analysis = json.analysis;
   state.slug = slug;
   state.transformLog = [];
+  state.projectId = null;
+  state.projectName = null;
   resetTransformBtn.hidden = true;
   downloadFullBtn.hidden = false;
   fullAnalysisBtn.hidden = !(state.analysis?.sample?.is_sample);
   renderAnalysis();
   navigate('overview');
+  startOnboarding();
 }
 
 async function loadDemoData() {
@@ -1295,11 +1714,14 @@ async function loadDemoData() {
   state.analysis = json.analysis;
   state.slug = null;
   state.transformLog = [];
+  state.projectId = null;
+  state.projectName = null;
   resetTransformBtn.hidden = true;
   downloadFullBtn.hidden = true;
   fullAnalysisBtn.hidden = true;
   renderAnalysis();
   navigate('overview');
+  startOnboarding();
 }
 
 function renderAnalysis(options = {}) {
@@ -1310,6 +1732,7 @@ function renderAnalysis(options = {}) {
   pill.hidden = false;
   pill.textContent = state.analysis.dataset_name || 'dataset';
   document.getElementById('site-nav').classList.add('has-data');
+  document.getElementById('tour-btn').hidden = false;
 
   const snap = state.analysis.research_snapshot || {};
   datasetInfoEl.innerHTML = `
@@ -1436,12 +1859,14 @@ searchInput.addEventListener('keydown', (event) => {
 });
 
 saveAnalysisBtn.addEventListener('click', () => {
+  if (window.handleSaveClick && window.handleSaveClick()) return;
   saveNameInput.value = state.analysis?.dataset_name ? `${state.analysis.dataset_name} analysis` : '';
   saveNameOverlay.hidden = false;
   saveNameInput.focus();
 });
 document.getElementById('save-name-cancel-btn').addEventListener('click', () => { saveNameOverlay.hidden = true; });
 document.getElementById('save-name-confirm-btn').addEventListener('click', () => {
+  if (window.cloudSaveConfirm && window.cloudSaveConfirm(saveNameInput.value)) { saveNameOverlay.hidden = true; return; }
   const result = saveCurrentAnalysis(saveNameInput.value);
   saveNameOverlay.hidden = true;
   if (!result.ok) {
@@ -1457,114 +1882,97 @@ saveNameInput.addEventListener('keydown', (event) => {
 saveNameOverlay.addEventListener('click', (event) => {
   if (event.target === saveNameOverlay) saveNameOverlay.hidden = true;
 });
-// Reproducible notebook: the server rebuilds it from the cached data plus the exact cleaning
-// steps applied here (transformLog), the charts currently on screen and the saved findings, so
-// running it top to bottom yields the same cleaned data, charts and statistics.
-document.getElementById('export-notebook-btn').addEventListener('click', async () => {
-  if (!state.analysis) return;
-  const btn = document.getElementById('export-notebook-btn');
-  const originalText = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = 'Building notebook...';
-  try {
-    const response = await fetch(`${API_BASE}/analysis/notebook`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        title: `${state.analysis.dataset_name || 'Dataset'} analysis`,
-        dataset_id: state.dataset?.dataset_id,
-        dataset: state.dataset,
-        analysis: state.analysis,
-        findings: state.findings,
-        charts: chartSlots.filter((slot) => slot.x.value || slot.type.value === 'missing').map((slot) => chartConfigOf(slot)),
-        transform_log: state.transformLog.filter((entry) => entry && entry.type),
-      }),
-    });
-    if (!response.ok) {
-      const errBody = await response.json().catch(() => ({}));
-      throw new Error(errBody.detail || `Notebook export failed (${response.status}).`);
+// The on-screen charts are styled for a dark page (light text, transparent background), which is
+// unreadable on white paper. For the PDF each chart is redrawn off-screen with a print theme.
+function printableLayout(layout) {
+  const ink = '#1a2233';
+  const muted = '#3b4358';
+  const copy = JSON.parse(JSON.stringify(layout || {}));
+  copy.paper_bgcolor = '#ffffff';
+  copy.plot_bgcolor = '#ffffff';
+  copy.font = {...(copy.font || {}), color: ink};
+  if (copy.title && typeof copy.title === 'object') copy.title.font = {...(copy.title.font || {}), color: ink};
+  if (copy.legend) copy.legend.font = {...(copy.legend.font || {}), color: muted};
+  Object.keys(copy).forEach((key) => {
+    if (/^[xy]axis\d*$/.test(key) && copy[key] && typeof copy[key] === 'object') {
+      const axis = copy[key];
+      axis.gridcolor = '#e3e7ef';
+      axis.linecolor = '#b8c0d0';
+      axis.zerolinecolor = '#b8c0d0';
+      axis.tickfont = {...(axis.tickfont || {}), color: muted};
+      if (axis.title && typeof axis.title === 'object') axis.title.font = {...(axis.title.font || {}), color: muted};
     }
-    const notebook = await response.json();
-    const blob = new Blob([JSON.stringify(notebook, null, 1)], {type: 'application/json'});
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `${(state.analysis.dataset_name || 'analysis').replace(/[^a-z0-9_-]+/gi, '_')}.ipynb`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-  } catch (error) {
-    alert(`Could not export the notebook: ${error.message || error}`);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = originalText;
+  });
+  if (copy.geo) {
+    copy.geo = {...copy.geo, bgcolor: '#ffffff', landcolor: '#eceff5', countrycolor: '#c3cadb', coastlinecolor: '#c3cadb'};
   }
-});
+  (copy.annotations || []).forEach((a) => { a.font = {...(a.font || {}), color: muted}; });
+  return copy;
+}
 
-// Shareable report for non-Python readers: a server-generated PDF with real, dataset-
-// specific statistical narrative (actual pearsonr correlation + significance tests,
-// distribution/group-comparison analysis computed against the full cached dataframe) per
-// chart, not a restated dump of the on-screen summary stats. The browser's job is only to
-// capture chart images and hand configs + findings to the API, which does the real writing.
-async function exportReportPDF() {
-  if (!state.analysis) return;
-  const btn = document.getElementById('export-report-btn');
-  const originalText = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = 'Generating report...';
+async function renderPrintableChart(slot) {
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position: fixed; left: -10000px; top: 0; width: 820px; height: 440px;';
+  document.body.appendChild(holder);
   try {
-    const charts = [];
-    for (const slot of chartSlots) {
-      if (!slot.area || !slot.area.data || !slot.x || !slot.x.value) continue;
-      const title = (slot.titleInput?.value || '').trim() || `${slot.x.value}${slot.y?.value ? ' vs ' + slot.y.value : ''}`;
-      let imageBase64 = null;
-      try {
-        const imgData = await Plotly.toImage(slot.area, {format: 'png', width: 820, height: 440});
-        imageBase64 = imgData.split(',')[1] || null;
-      } catch (error) {
-        // A chart that fails to rasterize just loses its image; the narrative still runs.
-      }
-      charts.push({
-        title,
-        type: slot.type.value,
-        x: slot.x.value,
-        y: slot.y.value,
-        agg: slot.agg.value,
-        group: slot.group.value,
-        granularity: slot.granularity.value,
-        image_base64: imageBase64,
-      });
-    }
-
-    const response = await fetch(`${API_BASE}/analysis/report`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        dataset_id: state.dataset?.dataset_id,
-        dataset_name: state.analysis.dataset_name || 'Dataset',
-        analysis: state.analysis,
-        dataset: {kaggle_info: state.dataset?.kaggle_info || null},
-        charts,
-        findings: state.findings,
-      }),
-    });
-    if (!response.ok) {
-      const errBody = await response.json().catch(() => ({}));
-      throw new Error(errBody.detail || `Report generation failed (${response.status}).`);
-    }
-    const blob = await response.blob();
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `${(state.analysis.dataset_name || 'analysis').replace(/[^a-z0-9_-]+/gi, '_')}-report.pdf`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-  } catch (error) {
-    alert(`Could not generate the PDF report: ${error.message || error}`);
-    console.error(error);
+    const data = JSON.parse(JSON.stringify(slot.area.data || []));
+    await Plotly.newPlot(holder, data, {...printableLayout(slot.area.layout), width: 820, height: 440}, {staticPlot: true});
+    return await Plotly.toImage(holder, {format: 'png', width: 820, height: 440, scale: 2});
   } finally {
-    btn.disabled = false;
-    btn.textContent = originalText;
+    try { Plotly.purge(holder); } catch (error) { /* already gone */ }
+    holder.remove();
   }
 }
-document.getElementById('export-report-btn').addEventListener('click', exportReportPDF);
+
+// Shareable report: a server-generated PDF whose numbers come from the full cached dataframe. The
+// browser's job is to capture print-themed chart images (only if the user wants them), and pass the
+// chosen file name and customization options; the server does the analysis and the writing.
+async function exportReportPDF() {
+  if (!state.analysis) return;
+  const button = document.getElementById('export-report-btn');
+  const prefs = exportPrefs.pdf;
+  await withBusyButton(button, 'Generating report...', async () => {
+    try {
+      const charts = [];
+      for (const slot of (prefs.include_charts ? chartSlots : [])) {
+        if (!slot.area || !slot.area.data || !slot.x || !slot.x.value) continue;
+        const title = (slot.titleInput?.value || '').trim() || slot.serverTitle || `${slot.x.value}${slot.y?.value ? ' vs ' + slot.y.value : ''}`;
+        let imageBase64 = null;
+        try {
+          const imgData = await renderPrintableChart(slot);
+          imageBase64 = imgData.split(',')[1] || null;
+        } catch (error) {
+          // A chart that fails to rasterize just loses its image; the analysis still runs.
+        }
+        charts.push({...chartConfigOf(slot), title, image_base64: imageBase64});
+      }
+      const response = await fetch(`${API_BASE}/analysis/report`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          dataset_id: state.dataset?.dataset_id,
+          dataset_name: state.analysis.dataset_name || 'Dataset',
+          filename: prefs.filename,
+          options: exportPayloadOptions('pdf'),
+          analysis: state.analysis,
+          dataset: state.dataset,
+          transform_log: state.transformLog.filter((entry) => entry && entry.type),
+          charts,
+          findings: state.findings,
+        }),
+      });
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error(errBody.detail || `Report generation failed (${response.status}).`);
+      }
+      saveBlobAs(await response.blob(), `${datasetLabel()}_report.pdf`, response);
+      flashDone(button, 'Downloaded ✓');
+    } catch (error) {
+      alert(`Could not generate the PDF report: ${error.message || error}`);
+      console.error(error);
+    }
+  });
+}
 let lastQuestionResult = null;
 state.qa = [];
 
@@ -1635,15 +2043,22 @@ function renderAskSuggestions() {
 document.getElementById('question-btn').addEventListener('click', () => runQuestion(questionInput.value));
 questionInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') runQuestion(questionInput.value); });
 
-// ---- Client-side router: one page at a time, addressable by URL hash (#/workspace), so
+// ---- Client-side router: one page at a time, addressable by URL hash (#/visualization), so
 // the browser back/forward buttons and bookmarks work. Pages that need a dataset show a
 // "load a dataset first" gate instead of an empty, confusing screen.
 
-const PAGE_ROUTES = ['datasets', 'overview', 'workspace', 'ask', 'export'];
+const PAGE_ROUTES = ['datasets', 'overview', 'visualization', 'ask', 'export', 'changelog', 'explore', 'projects', 'analysis'];
+const PAGE_HOOKS = {};   // page name -> function(param); social.js registers explore/projects/analysis and enriches datasets/overview
+let routeParam = null;
+const ROUTE_ALIASES = {workspace: 'visualization'}; // links from before the tab was renamed
 
 function currentRoute() {
+  const shared = window.location.hash.match(/^#\/a\/([\w-]+)/);
+  routeParam = shared ? shared[1] : null;
+  if (shared) return 'analysis';
   const match = window.location.hash.match(/^#\/(\w+)/);
-  return match && PAGE_ROUTES.includes(match[1]) ? match[1] : 'datasets';
+  const route = match ? (ROUTE_ALIASES[match[1]] || match[1]) : 'datasets';
+  return PAGE_ROUTES.includes(route) ? route : 'datasets';
 }
 
 function navigate(route) {
@@ -1658,17 +2073,254 @@ function renderRoute() {
   const shown = gated ? 'gate' : route;
   document.querySelectorAll('.page').forEach((el) => { el.hidden = el.dataset.page !== shown; });
   document.querySelectorAll('#site-nav a').forEach((link) => {
-    const active = link.dataset.nav === route;
+    const active = link.dataset.nav === (route === 'analysis' ? 'explore' : route);
     link.classList.toggle('active', active);
     if (active) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
   });
   document.title = `${target.dataset.title} · DataScopia`;
   window.scrollTo(0, 0);
   if (shown === 'datasets') renderSavedAnalysesPanel();
-  if (shown === 'workspace') resizeAllCharts();
+  if (shown === 'visualization') resizeAllCharts();
+  if (shown === 'changelog') renderChangelog();
   if (shown === 'ask') renderAskSuggestions();
-  if (shown === 'export') renderExportSummary();
+  if (shown === 'export') { renderExportForms(); renderExportSummary(); }
+  if (PAGE_HOOKS[shown]) PAGE_HOOKS[shown](routeParam);
 }
+// ---- Changelog page: releases come from /api/changelog; the stats, category filters and search
+// are all derived from that data, so adding a release to changelog.json is the only edit needed.
+
+const changelog = {data: null, tag: 'All', query: '', loading: null};
+const TAG_CLASS = {Design: 'tag-design', Platform: 'tag-platform', Analysis: 'tag-analysis', Foundation: 'tag-foundation', Data: 'tag-data', Export: 'tag-export', Origin: 'tag-origin'};
+
+function loadChangelog() {
+  if (changelog.data) return Promise.resolve(changelog.data);
+  if (!changelog.loading) {
+    changelog.loading = fetch(`${API_BASE}/api/changelog`)
+      .then((response) => { if (!response.ok) throw new Error('unavailable'); return response.json(); })
+      .then((data) => { changelog.data = data; return data; })
+      .finally(() => { changelog.loading = null; });
+  }
+  return changelog.loading;
+}
+
+function formatReleaseDate(iso) {
+  const date = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, {month: 'short', day: 'numeric', year: 'numeric'});
+}
+
+async function renderChangelog() {
+  const timeline = document.getElementById('cl-timeline');
+  let data;
+  try {
+    data = await loadChangelog();
+  } catch (error) {
+    timeline.innerHTML = '<p class="hint">Could not load the release history. Is the API server running?</p>';
+    return;
+  }
+  const stats = data.stats;
+  document.getElementById('cl-stats').innerHTML = `
+    <div class="cl-stat"><span>Releases</span><strong>${stats.releases}</strong><em>Documented milestones</em></div>
+    <div class="cl-stat"><span>Latest version</span><strong>${escapeHtml(data.latest)}</strong><em>${escapeHtml(formatReleaseDate(stats.latest_date))}</em></div>
+    <div class="cl-stat"><span>Days of building</span><strong>${stats.days}</strong><em>Since ${escapeHtml(formatReleaseDate(stats.first_date))}</em></div>
+    <div class="cl-stat"><span>Changes shipped</span><strong>${stats.changes}</strong><em>Across all releases</em></div>`;
+
+  const counts = {All: data.releases.length};
+  data.releases.forEach((release) => { counts[release.tag] = (counts[release.tag] || 0) + 1; });
+  const filters = document.getElementById('cl-filters');
+  filters.innerHTML = ['All', ...data.tags].map((tag) => `
+    <button type="button" class="cl-filter ${tag === changelog.tag ? 'active' : ''}" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)} <span>${counts[tag] || 0}</span></button>`).join('');
+  filters.querySelectorAll('[data-tag]').forEach((btn) => btn.addEventListener('click', () => {
+    changelog.tag = btn.dataset.tag;
+    renderChangelog();
+  }));
+
+  const query = changelog.query.trim().toLowerCase();
+  const visible = data.releases.filter((release) => {
+    if (changelog.tag !== 'All' && release.tag !== changelog.tag) return false;
+    if (!query) return true;
+    return [release.version, release.name, release.tag, release.meta, ...release.items].join(' ').toLowerCase().includes(query);
+  });
+  if (!visible.length) {
+    timeline.innerHTML = '<div class="panel"><p class="hint">No releases match that filter.</p></div>';
+    return;
+  }
+  timeline.innerHTML = visible.map((release, index) => {
+    const isLatest = release.version === data.latest;
+    return `
+      <article class="cl-card ${isLatest ? 'current' : ''}" style="animation-delay: ${Math.min(index, 8) * 45}ms">
+        <div class="cl-side">
+          <div>
+            <div class="cl-version">${escapeHtml(release.version)}</div>
+            <div class="cl-date">${escapeHtml(formatReleaseDate(release.date))}</div>
+          </div>
+          <span class="cl-badge ${TAG_CLASS[release.tag] || ''}">${isLatest ? 'Latest' : escapeHtml(release.tag)}</span>
+        </div>
+        <div class="cl-body">
+          <div class="cl-body-top">
+            <h2>${escapeHtml(release.name)}</h2>
+            <span class="cl-meta">${escapeHtml(release.meta || '')}</span>
+          </div>
+          <ul>${release.items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+        </div>
+      </article>`;
+  }).join('');
+}
+
+document.getElementById('cl-search').addEventListener('input', (event) => {
+  changelog.query = event.target.value;
+  renderChangelog();
+});
+
+// the header shows the current version, straight from the same data
+loadChangelog().then((data) => {
+  const badge = document.getElementById('nav-version');
+  badge.textContent = data.latest;
+  badge.hidden = false;
+}).catch(() => { /* the badge is decoration; the app works without it */ });
+
+// ---- First-run guidance: after a dataset is analyzed the user lands on the Overview, which can
+// look like the whole app. A dismissible guide plus a short spotlight tour point out where the
+// rest of the features live (Visualization, Ask, Export, saving). Shown automatically once per
+// browser; the "Quick tour" button brings it back any time.
+
+const ONBOARD_KEY = 'datascopia.onboarding.v1';
+function onboardingSeen() {
+  try { return localStorage.getItem(ONBOARD_KEY) === 'seen'; } catch (error) { return false; }
+}
+function markOnboardingSeen() {
+  try { localStorage.setItem(ONBOARD_KEY, 'seen'); } catch (error) { /* private browsing */ }
+}
+
+const TOUR_STEPS = [
+  {target: '[data-nav=overview]', title: 'Overview — you are here',
+   body: 'Start here: how big the data is, a quality score with one-click fixes, and what every column means.'},
+  {target: '[data-nav=visualization]', title: 'Visualization',
+   body: 'Charts picked for your data (maps, time series, distributions), plus editors to filter and clean it. Every chart is drawn from all rows.'},
+  {target: '[data-nav=ask]', title: 'Ask',
+   body: 'Ask a question in plain English, like "which region has the highest income?". Answers are computed from your data, never guessed.'},
+  {target: '[data-nav=export]', title: 'Export',
+   body: 'Turn the session into a runnable Jupyter notebook (with your cleaning steps replayed), a PDF report, or the quality report.'},
+  {target: '#save-analysis-btn', title: 'Save your work',
+   body: 'Save this analysis in your browser and pick it up again later from the Datasets page.'},
+];
+const tour = {index: 0, active: false, els: null};
+
+function showWelcomeCard(force = false) {
+  const card = document.getElementById('welcome-card');
+  card.hidden = false;
+  if (force) card.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+function hideWelcomeCard() {
+  document.getElementById('welcome-card').hidden = true;
+  markOnboardingSeen();
+}
+
+function ensureTourElements() {
+  if (tour.els) return tour.els;
+  const backdrop = document.createElement('div');
+  backdrop.className = 'tour-spot';
+  const pop = document.createElement('div');
+  pop.className = 'tour-pop';
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-live', 'polite');
+  document.body.append(backdrop, pop);
+  tour.els = {backdrop, pop};
+  return tour.els;
+}
+
+function positionTour() {
+  if (!tour.active) return;
+  const step = TOUR_STEPS[tour.index];
+  const target = document.querySelector(step.target);
+  const {backdrop, pop} = tour.els;
+  if (!target || target.offsetParent === null) {
+    // target not on screen (e.g. hidden button): skip to the next step instead of pointing at nothing
+    nextTourStep(1);
+    return;
+  }
+  const rect = target.getBoundingClientRect();
+  const pad = 6;
+  Object.assign(backdrop.style, {
+    left: `${rect.left - pad}px`, top: `${rect.top - pad}px`,
+    width: `${rect.width + pad * 2}px`, height: `${rect.height + pad * 2}px`,
+  });
+  const width = Math.min(340, window.innerWidth - 24);
+  pop.style.width = `${width}px`;
+  const left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left + rect.width / 2 - width / 2));
+  pop.style.left = `${left}px`;
+  pop.style.top = `${rect.bottom + 18}px`;
+  pop.style.setProperty('--arrow-x', `${Math.max(18, Math.min(width - 18, rect.left + rect.width / 2 - left))}px`);
+}
+
+function renderTourStep() {
+  const step = TOUR_STEPS[tour.index];
+  const {pop} = ensureTourElements();
+  const last = tour.index === TOUR_STEPS.length - 1;
+  pop.innerHTML = `
+    <div class="tour-count">Step ${tour.index + 1} of ${TOUR_STEPS.length}</div>
+    <h3>${escapeHtml(step.title)}</h3>
+    <p>${escapeHtml(step.body)}</p>
+    <div class="tour-dots">${TOUR_STEPS.map((_, i) => `<span class="${i === tour.index ? 'on' : ''}"></span>`).join('')}</div>
+    <div class="tour-actions">
+      <button type="button" class="tour-skip" data-tour="skip">Skip tour</button>
+      <span>
+        ${tour.index > 0 ? '<button type="button" class="btn secondary card-small-btn" data-tour="back">Back</button>' : ''}
+        <button type="button" class="btn card-small-btn" data-tour="next">${last ? 'Finish' : 'Next'}</button>
+      </span>
+    </div>`;
+  pop.querySelector('[data-tour=skip]').addEventListener('click', endTour);
+  pop.querySelector('[data-tour=next]').addEventListener('click', () => (last ? endTour() : nextTourStep(1)));
+  pop.querySelector('[data-tour=back]')?.addEventListener('click', () => nextTourStep(-1));
+  positionTour();
+}
+
+function nextTourStep(delta) {
+  const next = tour.index + delta;
+  if (next < 0) return;
+  if (next >= TOUR_STEPS.length) { endTour(); return; }
+  tour.index = next;
+  renderTourStep();
+}
+
+function startTour() {
+  if (!state.analysis) return;
+  navigate('overview');
+  window.scrollTo(0, 0);
+  tour.index = 0;
+  tour.active = true;
+  ensureTourElements();
+  document.body.classList.add('touring');
+  renderTourStep();
+}
+
+function endTour() {
+  tour.active = false;
+  document.body.classList.remove('touring');
+  markOnboardingSeen();
+}
+
+function startOnboarding() {
+  if (onboardingSeen()) return; // returning users get the guide only via the "Quick tour" button
+  showWelcomeCard();
+  setTimeout(startTour, 700); // let the Overview render before pointing at things
+}
+
+document.getElementById('welcome-dismiss').addEventListener('click', hideWelcomeCard);
+document.getElementById('welcome-dismiss-2').addEventListener('click', hideWelcomeCard);
+document.getElementById('welcome-tour-btn').addEventListener('click', startTour);
+document.getElementById('tour-btn').addEventListener('click', () => { showWelcomeCard(true); startTour(); });
+document.querySelectorAll('[data-step-scroll]').forEach((link) => link.addEventListener('click', (event) => {
+  event.preventDefault();
+  document.getElementById(link.dataset.stepScroll)?.scrollIntoView({behavior: 'smooth', block: 'start'});
+}));
+window.addEventListener('resize', positionTour);
+document.addEventListener('keydown', (event) => {
+  if (!tour.active) return;
+  if (event.key === 'Escape') endTour();
+  if (event.key === 'ArrowRight') nextTourStep(1);
+  if (event.key === 'ArrowLeft') nextTourStep(-1);
+});
+
 window.addEventListener('hashchange', renderRoute);
 renderSavedAnalysesPanel();
 renderFindings();

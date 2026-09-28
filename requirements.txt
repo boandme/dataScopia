@@ -14,3 +14,6 @@ fsspec>=2024.6.0
 scipy>=1.13.0
 scikit-learn>=1.5.0
 reportlab>=4.0.0
+
+google-auth>=2.30.0
+cryptography>=42.0.0

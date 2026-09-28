@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -30,9 +31,9 @@ from flask_cors import CORS
 from analysis.profiler import analyze_dataframe
 from analysis.notebook_export import build_notebook
 from analysis.qa_engine import answer_question
-from analysis.report import build_report_pdf
+from analysis.report_pdf import build_report_pdf
 from analysis.charts import CHART_TYPE_LABELS, render_chart
-from analysis.quality import quality_markdown
+from analysis.quality import quality_export
 from analysis.schema import build_schema
 from analysis.transforms import apply_transform, op_code, TransformError
 from dataset.kaggle_search import (
@@ -46,6 +47,12 @@ from dataset.descriptions import extract_column_descriptions, infer_column_descr
 from dataset.loader import load_dataset, load_dataframe_from_bytes
 from dataset.streaming import DEFAULT_SAMPLE_BYTES, load_dataset_sample
 import workspace_cache
+import accounts
+import graph as graph_mod
+import projects as projects_mod
+import services
+import shares as shares_mod
+from errors import ApiError
 
 WEB_DIR = PROJECT_ROOT / "apps" / "web"
 
@@ -59,20 +66,26 @@ CORS(app)
 SAMPLE_BYTES = int(float(os.getenv("ANALYSIS_SAMPLE_MB", "5")) * 1024 * 1024) or DEFAULT_SAMPLE_BYTES
 
 
-class ApiError(Exception):
-    """Raised for any request that should fail with a specific status code and a message safe
-    to show the user directly - the Flask equivalent of FastAPI's HTTPException, kept as its own
-    type so every route can `raise` instead of manually building an error Response inline."""
-
-    def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.detail = detail
+accounts.enforce_same_origin(app)
+for _bp in (accounts.bp, projects_mod.bp, shares_mod.bp, graph_mod.bp):
+    app.register_blueprint(_bp)
 
 
 @app.errorhandler(ApiError)
 def _handle_api_error(err: ApiError):
     return jsonify({"detail": err.detail}), err.status_code
+
+
+def _safe_filename(name: object, default: str, extension: str) -> str:
+    """A user-chosen download name made safe: no paths or odd characters, bounded length, right extension."""
+    stem = re.sub(r"[^A-Za-z0-9 _.\-]+", "_", str(name or "")).strip(" ._")[:90] or default
+    if stem.lower().endswith("." + extension):
+        stem = stem[: -(len(extension) + 1)].strip(" ._")
+    return f"{stem or default}.{extension}"
+
+
+def _attachment(filename: str) -> dict[str, str]:
+    return {"Content-Disposition": f'attachment; filename="{filename}"', "X-Filename": filename, "Access-Control-Expose-Headers": "Content-Disposition, X-Filename"}
 
 
 def _json_body() -> dict[str, object]:
@@ -86,15 +99,7 @@ def _serializable_dataset(dataset: dict[str, object]) -> dict[str, object]:
     return {key: value for key, value in dataset.items() if key not in {"dataframe", "path"}}
 
 
-def _attach_column_descriptions(dataset: dict[str, object], df: pd.DataFrame, documented: dict[str, str] | None = None) -> None:
-    """Attach both documented (from the dataset's own text, when available) and inferred
-    (deterministic, name-based heuristic) column descriptions, so the UI always has something to
-    show for every column without ever presenting a guess as if it were the author's own words."""
-    documented = documented or {}
-    dataset["column_descriptions"] = documented
-    dataset["inferred_column_descriptions"] = {
-        column: infer_column_description(column, df[column]) for column in df.columns if column not in documented
-    }
+_attach_column_descriptions = services.attach_column_descriptions
 
 
 def _attach_kaggle_description(dataset: dict[str, object], df: pd.DataFrame, slug: str) -> None:
@@ -118,10 +123,7 @@ def _cache_dataset(dataset: dict[str, object], df: pd.DataFrame, dataset_id: str
     dataset["dataset_id"] = dataset_id
 
 
-def _analysis_with_preview(df: pd.DataFrame, dataset_name: str, sample_info: dict[str, object] | None = None) -> dict[str, object]:
-    analysis = analyze_dataframe(df, dataset_name=dataset_name, sample_info=sample_info)
-    analysis["preview"] = json.loads(df.head(300).to_json(orient="records", date_format="iso"))
-    return analysis
+_analysis_with_preview = services.analysis_with_preview
 
 
 _schema_cache: dict[str, tuple[int, dict[str, object]]] = {}
@@ -219,6 +221,7 @@ def analyze_dataset_from_kaggle():
         df = dataset["dataframe"]
         _cache_dataset(dataset, df, dataset_id=str(slug))
         _attach_kaggle_description(dataset, df, str(slug))
+        graph_mod.index_dataset(str(slug), (dataset.get("kaggle_info") or {}).get("title") or str(slug), (dataset.get("kaggle_info") or {}).get("license"), df)
         analysis = _analysis_with_preview(df, dataset["name"], sample_info=dataset.get("sample"))
         return jsonify({"dataset": _serializable_dataset(dataset), "analysis": analysis})
     except Exception as exc:  # pragma: no cover
@@ -244,6 +247,7 @@ def analyze_dataset_full():
             df = dataset["dataframe"]
             _cache_dataset(dataset, df, dataset_id=str(slug))
             _attach_kaggle_description(dataset, df, str(slug))
+            graph_mod.index_dataset(str(slug), (dataset.get("kaggle_info") or {}).get("title") or str(slug), (dataset.get("kaggle_info") or {}).get("license"), df)
             analysis = _analysis_with_preview(df, dataset["name"])
             return jsonify({"dataset": _serializable_dataset(dataset), "analysis": analysis})
     except Exception as exc:  # pragma: no cover
@@ -310,8 +314,7 @@ def upload_dataset():
         raise ApiError(400, str(exc)) from exc
 
 
-def _original_cache_key(dataset_id: str) -> str:
-    return f"{dataset_id}::original"
+_original_cache_key = services.original_cache_key
 
 
 @app.post("/datasets/transform")
@@ -397,19 +400,16 @@ def chart_types():
 
 
 @app.post("/analysis/quality-report")
-def quality_report_markdown():
+def quality_report_download():
     payload = _json_body()
     analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
     report = analysis.get("data_quality")
     if not isinstance(report, dict):
         raise ApiError(400, "No data-quality report to export. Analyze a dataset first.")
     name = str(payload.get("dataset_name") or analysis.get("dataset_name") or "dataset")
-    filename = f"{name.replace(' ', '_').replace('/', '-')}_data_quality.md"
-    return Response(
-        quality_markdown(report, name),
-        mimetype="text/markdown",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    content, mimetype, ext = quality_export(report, name, payload.get("options") if isinstance(payload.get("options"), dict) else None)
+    filename = _safe_filename(payload.get("filename"), f"{name}_data_quality", ext)
+    return Response(content, mimetype=mimetype, headers=_attachment(filename))
 
 
 @app.post("/analysis/notebook")
@@ -434,10 +434,17 @@ def export_analysis_notebook():
         dataset = {**dataset, "dataset_id": str(dataset_id)}
     try:
         notebook = build_notebook(title, findings, analysis, df=df, original_df=original,
-                                  transform_log=transform_log, dataset=dataset, charts=charts)
+                                  transform_log=transform_log, dataset=dataset, charts=charts,
+                                  options=payload.get("options") if isinstance(payload.get("options"), dict) else None)
     except Exception as exc:
         raise ApiError(500, f"Could not build the notebook: {exc}") from exc
-    return jsonify(notebook)
+    response = jsonify(notebook)
+    response.headers.update(_attachment(_safe_filename(payload.get("filename"), f"{name_for_file(analysis, title)}", "ipynb")))
+    return response
+
+
+def name_for_file(analysis: dict[str, object], title: str) -> str:
+    return str(analysis.get("dataset_name") or title or "analysis")
 
 
 @app.post("/analysis/question")
@@ -517,11 +524,11 @@ def export_analysis_report():
     if df is None or df.empty:
         raise ApiError(400, "No dataset data is available to build a report. Analyze a dataset first.")
 
-    kaggle_description = None
     dataset_payload = payload.get("dataset") if isinstance(payload.get("dataset"), dict) else {}
     kaggle_info = dataset_payload.get("kaggle_info") if isinstance(dataset_payload.get("kaggle_info"), dict) else {}
-    if kaggle_info.get("description"):
-        kaggle_description = str(kaggle_info["description"])
+    kaggle_description = str(kaggle_info["description"]) if kaggle_info.get("description") else None
+    transform_log = payload.get("transform_log") if isinstance(payload.get("transform_log"), list) else []
+    dataset_info = {**dataset_payload, "dataset_id": dataset_payload.get("dataset_id") or dataset_id}
 
     try:
         pdf_bytes = build_report_pdf(
@@ -531,16 +538,15 @@ def export_analysis_report():
             kaggle_description=kaggle_description,
             charts=charts,
             findings=findings,
+            dataset_info=dataset_info,
+            transform_log=transform_log,
+            options=payload.get("options") if isinstance(payload.get("options"), dict) else None,
         )
     except Exception as exc:
         raise ApiError(500, f"Could not generate the report: {exc}") from exc
 
-    filename = f"{dataset_name.replace(' ', '_').replace('/', '-')}_report.pdf"
-    return Response(
-        pdf_bytes,
-        mimetype="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    filename = _safe_filename(payload.get("filename"), f"{dataset_name}_report", "pdf")
+    return Response(pdf_bytes, mimetype="application/pdf", headers=_attachment(filename))
 
 
 @app.get("/datasets/demo")
@@ -571,6 +577,23 @@ def root():
     together - is a single "visit this URL" website instead of two separately launched pieces
     (a manually-started API process plus a manually-opened HTML file)."""
     return send_file(WEB_DIR / "index.html")
+
+
+@app.get("/api/changelog")
+def changelog():
+    """Release history, newest first, with summary statistics computed from the data itself so
+    the Changelog page never drifts from the list it displays."""
+    releases = json.loads((APP_DIR / "changelog.json").read_text(encoding="utf-8"))
+    dates = sorted(r["date"] for r in releases)
+    span_days = (pd.Timestamp(dates[-1]) - pd.Timestamp(dates[0])).days + 1
+    tags = sorted({r["tag"] for r in releases})
+    return jsonify({
+        "latest": releases[0]["version"],
+        "releases": releases,
+        "tags": tags,
+        "stats": {"releases": len(releases), "first_date": dates[0], "latest_date": dates[-1], "days": span_days,
+                  "changes": sum(len(r["items"]) for r in releases)},
+    })
 
 
 @app.get("/api")

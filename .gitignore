@@ -2,3 +2,11 @@
 __pycache__/
 *.pyc
 .venv/
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Firebase service-account keys must never be committed
+*service-account*.json
+*firebase-adminsdk*.json

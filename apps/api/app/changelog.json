@@ -1,0 +1,223 @@
+[
+  {
+    "version": "v1.25",
+    "date": "2026-09-27",
+    "name": "Redesigned Sign-In, Deeper Exports & Scientific-Grade Charts",
+    "tag": "Design & Analysis",
+    "meta": "Accounts, exports and visualization",
+    "items": [
+      "The sign-in and account-settings modals were rebuilt: a split visual panel, icon-led fields, a password-visibility toggle, inline error states and a redesigned account menu with an avatar ring and iconed dropdown.",
+      "The exported notebook now carries the same deep-statistics engine as the PDF report: a 'Deep statistical interpretation' section (confidence intervals, robustness checks, Simpson's-paradox screening, evidence ratings) and conclusions that lead with the best-supported findings instead of generic bullet points. Both exports show a shared reproducibility fingerprint, so a notebook and a PDF of the same analysis can be confirmed to describe the same data.",
+      "The PDF report gained a clickable Contents page and a full outline in the PDF viewer's sidebar, so long reports are easy to navigate.",
+      "Every chart now draws a proper bordered frame with outward tick marks on both axes (not just gridlines), so it reads as a finished scientific figure rather than numbers floating on a grid - applied consistently across histograms, bar charts, scatter plots, lines, box/violin plots, heatmaps and pair plots.",
+      "Fixed a real distortion in scatter charts: a linear trend line fit through skewed data (e.g. income-like measures) could extrapolate far past the actual data at the axis edges, which silently stretched the whole y-axis and squeezed every real point into a sliver of the chart. The axis range is now fixed to the data itself, so the fit line can run off the frame without warping the scale.",
+      "Export titles now default to whatever you already named the analysis (the saved or cloud project name) instead of a generic dataset-based guess, and the file name keeps following the title as you edit it (previously it could silently stop syncing on a second export) - so naming an analysis once is enough."
+    ]
+  },
+  {
+    "version": "v1.1",
+    "date": "2026-09-27",
+    "name": "Firebase Accounts & Cloud Storage",
+    "tag": "Platform",
+    "meta": "Your Firebase project",
+    "items": [
+      "Sign in with Firebase Authentication: email and password, Google, password reset emails and email verification. The server verifies Firebase ID tokens against Google's public keys, so no password ever reaches it and no secret is needed for sign-in.",
+      "Projects, published analyses and the dataset catalogue can live in the Firebase Realtime Database and your datasets in Cloud Storage, so they survive redeploys and work across devices. Storage switches on automatically when a service-account key and database URL are provided; otherwise everything stays local.",
+      "Sessions renew silently: if the server restarts, the browser (still signed in to Firebase) signs back in without asking.",
+      "Security rules that deny all direct browser access are included, along with a step-by-step setup guide."
+    ]
+  },
+  {
+    "version": "v1.0",
+    "date": "2026-09-27",
+    "name": "Accounts, Verified Analyses & the Dataset Graph",
+    "tag": "Platform",
+    "meta": "The platform release",
+    "items": [
+      "Accounts: create an account, sign in on any device, change your password or delete everything. Passwords use scrypt, sessions are HttpOnly cookies, sign-in is rate limited and cross-site writes are rejected.",
+      "Cloud projects: save the original data, your cleaning steps, findings and charts to your account, reopen them later with everything replayed exactly, duplicate, rename or delete them, with auto-save while you work.",
+      "Verified, shareable analyses: publish an analysis under a public link with a reproducibility hash. Anyone can re-run verification - the server replays your cleaning steps on the stored data and recomputes every number - and tampering or data changes are caught. Readers can download a PDF or notebook and, if the author allows, fork it into their own project.",
+      "Explore: browse and search published analyses, filter to verified ones, sort by forks or views.",
+      "Dataset graph: see which datasets can be combined with yours. Country, US-state, year and ID keys are matched even when spelled differently (Viet Nam vs VNM), from a catalogue that grows every time a Kaggle dataset is analysed, a built-in library and your own projects. Preview the join, then create the combined dataset in one click."
+    ]
+  },
+  {
+    "version": "v0.92",
+    "date": "2026-09-26",
+    "name": "Deep Analysis Reports & Export Studio",
+    "tag": "Export",
+    "meta": "Customizable, evidence-rated",
+    "items": [
+      "Reports now go far beyond one sentence per chart: every headline correlation is stress-tested (confidence intervals, outlier removal, rank correlation, curvature, subgroup consistency), null results are stated with the smallest effect the data could have detected, and multicollinearity and variable clusters are analysed.",
+      "Trend analysis covers compound growth, Kendall tau, volatility, the largest jump, change-points, acceleration, how many entities follow the trend and which groups grow fastest; group differences get Holm-adjusted post-hoc contrasts with effect sizes.",
+      "Every workspace chart in the PDF gets a two-part reading - what the data show and what it means - and the conclusions include an evidence table rating each finding High, Moderate or Low.",
+      "The Export page lets you name every file and customize each export: PDF (title, author, organization, notes, detail level, theme, page size, text size, sections, footer), notebook (title, author, sections, embedded data size, charts, model settings) and data quality report (Markdown, JSON or CSV, severity filter, contents). Choices are remembered.",
+      "Exporting now asks you to title the report, notebook or quality report first (with a file name that follows the title), so nothing is generated under an accidental default name."
+    ]
+  },
+  {
+    "version": "v0.9",
+    "date": "2026-09-26",
+    "name": "Research-Grade PDF Report",
+    "tag": "Export",
+    "meta": "Analysis-first reporting",
+    "items": [
+      "The PDF report was rebuilt around data analysis: title block with key figures, executive summary with key findings and recommended actions, introduction with testable hypotheses, methods, data-quality audit, results, discussion, conclusions, references and appendices.",
+      "Results are backed by real statistics computed from every row: descriptive tables (mean +/- SD, median, IQR), correlations with Bonferroni adjustment, Kruskal-Wallis group tests with effect sizes, target associations, trend tests and a held-out baseline model with permutation importance.",
+      "Tables and figures are numbered, captioned and referenced in the text; results are kept separate from interpretation; limitations, a reproducibility record (data fingerprint, software versions, cleaning steps) and a variable dictionary are included.",
+      "Workspace charts are re-rendered with a print theme so they are readable on white paper."
+    ]
+  },
+  {
+    "version": "v0.81",
+    "date": "2026-09-26",
+    "name": "Guided First Run",
+    "tag": "Design",
+    "meta": "Onboarding",
+    "items": [
+      "After a dataset is analyzed, a welcome guide points to the next steps (check quality, Visualization, Ask, Export) so the Overview no longer looks like the whole app.",
+      "A five-step spotlight tour highlights each menu tab and the Save button; it runs once per browser, can be skipped or driven with the arrow keys, and returns any time from the Quick tour button."
+    ]
+  },
+  {
+    "version": "v0.8",
+    "date": "2026-09-26",
+    "name": "Visualization Studio & Release History",
+    "tag": "Design",
+    "meta": "Bigger navigation, vivid charts",
+    "items": [
+      "Renamed the Workspace tab to Visualization, and moved the whole menu into a full-width, sticky top bar with larger type and an animated active-tab indicator.",
+      "Charts now use a vivid indigo-to-gold magnitude ramp by default: bars, histograms, scatter points, maps, treemaps and missing-value charts are colored by value, box plots give every group its own color, and lines get a soft glow.",
+      "Added this dynamic Changelog page: releases are served from the API, filterable by category, searchable, and the summary statistics are computed live from the release data."
+    ]
+  },
+  {
+    "version": "v0.7",
+    "date": "2026-09-24",
+    "name": "Multi-Page Site",
+    "tag": "Platform",
+    "meta": "Hash-routed pages",
+    "items": [
+      "DataScopia became a multi-page site with a top menu: Datasets, Overview, Workspace, Ask and Export, with working back/forward buttons and deep links.",
+      "Pages that need a dataset show a clear 'load a dataset first' gate instead of an empty screen; loading a dataset lands you on the Overview.",
+      "The Ask page gained suggested questions built from the loaded data and a clickable session history.",
+      "Removed the license consent dialog as too intrusive; the license is still shown on search results and on the loaded dataset."
+    ]
+  },
+  {
+    "version": "v0.6",
+    "date": "2026-09-24",
+    "name": "Reproducible Notebooks & Smart Charts",
+    "tag": "Analysis",
+    "meta": "The big analysis upgrade",
+    "items": [
+      "Notebook export rewritten: data source and license, loading, a quality audit, the exact in-app cleaning steps replayed as pandas code, summary statistics, charts as code, statistical tests with effect sizes, a baseline model, saved findings and conclusions.",
+      "Schema detection gives every column a meaning (identifier, year, string dates, country, US state, coordinates, ordinal, text, numbers stored as text) and finds time-series structure and candidate join keys.",
+      "A server-side chart engine draws 17 chart types from every row, and recommends only the charts that are statistically appropriate, each with the reason and supporting statistic.",
+      "New scored Data Quality Report with one-click fixes that flow into the notebook, plus a Markdown export.",
+      "Engineering hygiene: Flask API tests, GitHub Actions CI, and the frontend split into separate HTML, CSS and JavaScript files."
+    ]
+  },
+  {
+    "version": "v0.51",
+    "date": "2026-09-23",
+    "name": "Deployment Readiness",
+    "tag": "Platform",
+    "meta": "Render-ready",
+    "items": [
+      "Added wsgi.py, a Procfile and a render.yaml so the app can be deployed as a single Python web service, with credentials read from environment variables.",
+      "Decluttered the workspace panel."
+    ]
+  },
+  {
+    "version": "v0.5",
+    "date": "2026-09-23",
+    "name": "Flask Migration & Text-Encoding Fix",
+    "tag": "Foundation",
+    "meta": "One-command launch",
+    "items": [
+      "Closed out the garbled-text bug class: detects BOM-less UTF-16 and ZIP/GZIP-wrapped files served under a .csv name, and raises a clear error instead of returning garbage columns.",
+      "Migrated the backend from FastAPI to Flask; the whole app now launches with a single command and opens in the browser.",
+      "Moved 'Ask about this dataset' to the top of the page."
+    ]
+  },
+  {
+    "version": "v0.45",
+    "date": "2026-09-22",
+    "name": "Smarter Column Descriptions",
+    "tag": "Data",
+    "meta": "Encoding + delimiters",
+    "items": [
+      "Rebuilt column-description inference to be subject-aware (school_name becomes 'the name of the school').",
+      "Automatic text-encoding detection and delimiter sniffing fixed garbled columns in a meaningful share of real Kaggle CSVs.",
+      "Fixed 'Analyze current dataset', which had always reloaded the demo."
+    ]
+  },
+  {
+    "version": "v0.42",
+    "date": "2026-09-21",
+    "name": "DataScopia Brand & PDF Reports",
+    "tag": "Export",
+    "meta": "Identity + reporting",
+    "items": [
+      "Full DataScopia brand identity and page redesign.",
+      "Server-side PDF research report with scipy-backed narrative per chart: correlations, distribution shape and group-comparison tests.",
+      "New Column Explorer with a name-based description engine, and a fix for a boolean-dtype crash class."
+    ]
+  },
+  {
+    "version": "v0.4",
+    "date": "2026-09-21",
+    "name": "In-App Data Transformation",
+    "tag": "Analysis",
+    "meta": "Clean without leaving the app",
+    "items": [
+      "Filter, clean and merge columns server-side on the full sample; steps compose, can be reset, and every chart and question reflects them instantly.",
+      "Saved analyses in the browser, per-chart export with format and scale controls, and a unified card-based workspace.",
+      "A 55-test suite and a benchmark that caught, and fixed, a roughly 440x slowdown in column merging."
+    ]
+  },
+  {
+    "version": "v0.38",
+    "date": "2026-09-20",
+    "name": "Q&A Expansion",
+    "tag": "Analysis",
+    "meta": "More questions answered",
+    "items": [
+      "Expanded the question engine: dataset overview, duplicates, value counts, rankings, ratios, trend detection and multi-condition filters.",
+      "Kaggle dataset and column descriptions are surfaced in the UI."
+    ]
+  },
+  {
+    "version": "v0.35",
+    "date": "2026-09-20",
+    "name": "Sample-Based Analysis & Uploads",
+    "tag": "Foundation",
+    "meta": "No full download needed",
+    "items": [
+      "Streams only a bounded sample of a Kaggle file for analysis; a full download is opt-in.",
+      "Server-side dataframe caching, a deterministic natural-language Q&A engine grounded in real computation, and CSV, Parquet, JSON and Excel upload.",
+      "Fixed Kaggle search, which had been silently capped at a few results, and added the first reproducible notebook export."
+    ]
+  },
+  {
+    "version": "v0.3",
+    "date": "2026-09-20",
+    "name": "First Working Backend",
+    "tag": "Foundation",
+    "meta": "Kaggle connected",
+    "items": [
+      "Kaggle authentication and search, dataset loading, and a basic profiler wired to a Plotly frontend."
+    ]
+  },
+  {
+    "version": "v0.1",
+    "date": "2026-09-19",
+    "name": "Initial Plan",
+    "tag": "Origin",
+    "meta": "Spec and scaffolding",
+    "items": [
+      "Product specification, architecture document and repository scaffolding."
+    ]
+  }
+]

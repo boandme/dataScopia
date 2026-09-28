@@ -169,7 +169,56 @@ def test_license_endpoint_survives_kaggle_failure(client, monkeypatch):
 
 def test_frontend_is_a_multi_page_app_with_static_assets(client):
     html = client.get("/").get_data(as_text=True)
-    for route in ("datasets", "overview", "workspace", "ask", "export"):
+    for route in ("datasets", "overview", "visualization", "ask", "export", "changelog"):
         assert f'data-page="{route}"' in html and f'href="#/{route}"' in html
     assert client.get("/assets/app.js").status_code == 200
     assert client.get("/assets/styles.css").status_code == 200
+
+
+def test_changelog_endpoint(client):
+    body = client.get("/api/changelog").get_json()
+    releases = body["releases"]
+    assert body["latest"] == releases[0]["version"]
+    assert body["stats"]["releases"] == len(releases) and body["stats"]["changes"] > len(releases)
+    assert {r["tag"] for r in releases} == set(body["tags"])
+    assert all(r["items"] and r["date"] and r["name"] for r in releases)
+
+
+def test_report_honours_filename_and_options(client):
+    body = upload(client)
+    response = client.post("/analysis/report", json={"dataset_id": body["dataset"]["dataset_id"], "dataset_name": "econ", "analysis": body["analysis"],
+                                                     "filename": "../../My Board Report!.pdf", "options": {"title": "Board Pack", "detail": "brief", "page_size": "a4"}})
+    assert response.status_code == 200 and response.data.startswith(b"%PDF")
+    disposition = response.headers["Content-Disposition"]
+    assert 'filename="My Board Report.pdf"' in disposition or "My_Board_Report" in disposition
+    assert ".." not in disposition and "/" not in disposition.split("filename=")[1]
+
+
+def test_notebook_honours_options_and_filename(client):
+    import nbformat
+
+    body = upload(client)
+    response = client.post("/analysis/notebook", json={"dataset_id": body["dataset"]["dataset_id"], "analysis": body["analysis"], "dataset": body["dataset"], "filename": "my analysis",
+                                                       "options": {"author": "Dr. Ada", "notes": "For class", "embed_rows": 0, "sections": {"modelling": False, "statistics": False, "quality": False},
+                                                                   "chart_source": "recommended", "max_charts": 2}})
+    nb = response.get_json()
+    nbformat.validate(nbformat.from_dict(nb))
+    text = " ".join("".join(c["source"]) for c in nb["cells"])
+    assert "Dr. Ada" in text and "For class" in text and "_SNAPSHOT_GZ_B64" not in text and "No data is embedded" in text
+    assert "Predictive modelling" not in text and "Statistical analysis" not in text and "Data quality before cleaning" not in text
+    headings = [c["source"][0] for c in nb["cells"] if c["cell_type"] == "markdown" and c["source"][0].startswith("## ")]
+    numbers = [int(h.split(".")[0].replace("## ", "")) for h in headings if h.split(".")[0].replace("## ", "").isdigit()]
+    assert numbers == list(range(1, len(numbers) + 1))  # renumbered without gaps
+    assert response.headers["X-Filename"] == "my analysis.ipynb"
+
+
+def test_quality_export_formats_and_filters(client):
+    body = upload(client)
+    payload = {"analysis": {"data_quality": body["analysis"]["data_quality"], "dataset_name": "econ"}, "dataset_name": "econ"}
+    md = client.post("/analysis/quality-report", json={**payload, "options": {"title": "My Audit", "include_why": False}, "filename": "audit"})
+    assert md.status_code == 200 and b"# My Audit" in md.data and b"Why it matters" not in md.data and md.headers["X-Filename"] == "audit.md"
+    js = client.post("/analysis/quality-report", json={**payload, "options": {"format": "json", "severities": ["high"]}})
+    data = js.get_json()
+    assert js.mimetype == "application/json" and all(i["severity"] == "high" for i in data["issues"]) and js.headers["X-Filename"].endswith(".json")
+    csv_response = client.post("/analysis/quality-report", json={**payload, "options": {"format": "csv"}})
+    assert csv_response.mimetype == "text/csv" and csv_response.data.startswith(b"severity,category")

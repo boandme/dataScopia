@@ -25,11 +25,15 @@ from __future__ import annotations
 import base64
 import gzip
 import json
+import re
+from datetime import datetime
 from typing import Any
 
 import pandas as pd
 
 from . import quality as quality_mod
+from . import report_deep as report_deep_mod
+from . import report_stats as report_stats_mod
 from . import schema as schema_mod
 from .chart_code import chart_code
 from .profiler import analyze_dataframe
@@ -43,6 +47,34 @@ MAX_NOTEBOOK_CHARTS = 12
 _NUMERIC_ROLES = {"numeric", "ordinal_numeric", "binary_numeric", "year", "geo_lat", "geo_lon"}
 _CATEGORICAL_ROLES = {"categorical", "binary", "ordinal", "geo_country", "geo_state"}
 _SKIP_FEATURE_ROLES = {"identifier", "text", "constant", "empty", "datetime"}
+
+DEFAULT_SECTIONS = {"quality": True, "cleaning": True, "structure": True, "summary": True, "visualizations": True,
+                    "statistics": True, "modelling": True, "findings": True, "conclusions": True}
+EMBED_CHOICES = (0, 1000, 5000, 10000)
+
+
+def normalize_options(options: dict[str, Any] | None) -> dict[str, Any]:
+    """Validated, defaulted notebook options (the browser may send anything)."""
+    o = options if isinstance(options, dict) else {}
+    ml = o.get("ml") if isinstance(o.get("ml"), dict) else {}
+
+    def num(value: Any, default: float, low: float, high: float) -> float:
+        try:
+            return max(low, min(high, float(value)))
+        except (TypeError, ValueError):
+            return default
+
+    embed = o.get("embed_rows")
+    return {
+        "author": str(o.get("author") or "").strip()[:120],
+        "notes": str(o.get("notes") or "").strip()[:1500],
+        "sections": {**DEFAULT_SECTIONS, **{k: bool(v) for k, v in (o.get("sections") or {}).items() if k in DEFAULT_SECTIONS}},
+        "embed_rows": int(embed) if isinstance(embed, (int, float)) and int(embed) in EMBED_CHOICES else MAX_EMBED_ROWS,
+        "chart_source": o.get("chart_source") if o.get("chart_source") in {"both", "workspace", "recommended"} else "both",
+        "max_charts": int(num(o.get("max_charts"), MAX_NOTEBOOK_CHARTS, 1, 30)),
+        "ml": {"test_size": num(ml.get("test_size"), 0.25, 0.1, 0.5), "seed": int(num(ml.get("seed"), 42, 0, 99999)), "trees": int(num(ml.get("trees"), 200, 20, 600))},
+    }
+
 
 STEP_TITLES = {
     "filter": "Filter rows",
@@ -111,9 +143,11 @@ def _read_call(file_name: str) -> str:
     return "pd.read_csv(DATA_FILE, encoding_errors='replace', low_memory=False)"
 
 
-def _embed_snapshot(original: pd.DataFrame) -> tuple[str, int, bool]:
-    """gzip+base64 CSV of (up to MAX_EMBED_ROWS of) the original rows -> (blob, rows, truncated)."""
-    frame = original.head(MAX_EMBED_ROWS)
+def _embed_snapshot(original: pd.DataFrame, max_rows: int = MAX_EMBED_ROWS) -> tuple[str, int, bool]:
+    """gzip+base64 CSV of (up to ``max_rows`` of) the original rows -> (blob, rows, truncated)."""
+    if max_rows <= 0:
+        return "", 0, True
+    frame = original.head(max_rows)
     blob = ""
     while True:
         csv_bytes = frame.to_csv(index=False).encode("utf-8")
@@ -139,10 +173,20 @@ def _kaggle_slug(dataset: dict[str, Any]) -> str | None:
 
 # ----------------------------------------------------------------------------- sections
 
-def _intro(cells: _Cells, title: str, name: str, analysis: dict[str, Any], slug: str | None) -> None:
+def _intro(cells: _Cells, title: str, name: str, analysis: dict[str, Any], slug: str | None, opts: dict[str, Any] | None = None, fingerprint: str | None = None) -> None:
     snap = analysis.get("research_snapshot") or {}
+    opts = opts or {}
+    byline = ""
+    if opts.get("author"):
+        byline = f"*Prepared by {opts['author']} on {datetime.now().strftime('%d %B %Y')}.*\n\n"
+    if opts.get("notes"):
+        byline += f"> {opts['notes']}\n\n"
+    if fingerprint:
+        byline += (f"**Reproducibility fingerprint:** `{fingerprint}` - a hash of this dataset's contents. It matches the fingerprint "
+                   "shown on a PDF export of the same analysis, so you can confirm both describe the same data.\n\n")
     cells.md(
         f"# {title}\n\n"
+        f"{byline}"
         f"An exploratory analysis of **{name}** ({snap.get('rows', 0):,} rows x {snap.get('columns', 0)} columns), "
         "exported from DataScopia.\n\n"
         "**How to read this notebook.** It runs top to bottom: it loads the data, checks its quality, replays every "
@@ -190,11 +234,11 @@ def _source_and_license(cells: _Cells, name: str, dataset: dict[str, Any]) -> No
     cells.md("\n".join(lines))
 
 
-def _loading(cells: _Cells, original: pd.DataFrame, dataset: dict[str, Any], analysis: dict[str, Any], name: str) -> None:
+def _loading(cells: _Cells, original: pd.DataFrame, dataset: dict[str, Any], analysis: dict[str, Any], name: str, embed_rows: int = MAX_EMBED_ROWS) -> None:
     sample = dataset.get("sample") or analysis.get("sample") or {}
     file_name = str(sample.get("file_name") or dataset.get("file_name") or f"{name}.{dataset.get('file_type') or 'csv'}")
     slug = _kaggle_slug(dataset)
-    blob, embedded_rows, truncated = _embed_snapshot(original)
+    blob, embedded_rows, truncated = _embed_snapshot(original, embed_rows)
     total_rows = len(original)
     is_partial = bool(sample.get("is_sample"))
 
@@ -205,9 +249,12 @@ def _loading(cells: _Cells, original: pd.DataFrame, dataset: dict[str, Any], ana
     ]
     if slug:
         note.append(f"2. **Kaggle** - set `USE_KAGGLE = True` to download `{slug}` with `kagglehub` (needs Kaggle credentials).")
-        note.append(f"3. **The embedded snapshot** - {embedded_rows:,} rows saved inside this notebook, so it always runs.")
-    else:
+        if embedded_rows:
+            note.append(f"3. **The embedded snapshot** - {embedded_rows:,} rows saved inside this notebook, so it always runs.")
+    elif embedded_rows:
         note.append(f"2. **The embedded snapshot** - {embedded_rows:,} rows saved inside this notebook, so it always runs.")
+    if not embedded_rows:
+        note.append("\n> **No data is embedded in this notebook** (chosen at export time to keep it small and private), so the local file or Kaggle download is required.")
     if truncated or is_partial:
         why = []
         if is_partial:
@@ -218,7 +265,8 @@ def _loading(cells: _Cells, original: pd.DataFrame, dataset: dict[str, Any], ana
                     "use the local file or Kaggle download for the complete data.")
     cells.md("\n".join(note))
 
-    cells.code("# Embedded snapshot of the original rows (gzip-compressed CSV, base64-encoded). Safe to skip over.\n" + _wrap_blob(blob))
+    if embedded_rows:
+        cells.code("# Embedded snapshot of the original rows (gzip-compressed CSV, base64-encoded). Safe to skip over.\n" + _wrap_blob(blob))
 
     kaggle_block = ""
     if slug:
@@ -237,8 +285,10 @@ def _loading(cells: _Cells, original: pd.DataFrame, dataset: dict[str, Any], ana
         f"    df_raw = {_read_call(file_name)}\n"
         "    print(f'Loaded {DATA_FILE}')\n"
         "else:\n"
-        "    df_raw = pd.read_csv(io.BytesIO(gzip.decompress(base64.b64decode(''.join(_SNAPSHOT_GZ_B64)))), low_memory=False)\n"
-        "    print('Local file not found - using the snapshot embedded in this notebook.')\n"
+        + ("    df_raw = pd.read_csv(io.BytesIO(gzip.decompress(base64.b64decode(''.join(_SNAPSHOT_GZ_B64)))), low_memory=False)\n"
+           "    print('Local file not found - using the snapshot embedded in this notebook.')\n" if embedded_rows else
+           "    raise FileNotFoundError(f'{DATA_FILE} not found. Place the data file next to this notebook (no snapshot is embedded).')\n")
+        + ""
         "\n"
         "df = df_raw.copy()   # 'df' is the working copy; df_raw stays untouched for comparison\n"
         "print(f'{df.shape[0]:,} rows x {df.shape[1]} columns')\n"
@@ -369,7 +419,7 @@ def _chart_key(cfg: dict[str, Any]) -> tuple:
     return (cfg.get("type"), cfg.get("x"), cfg.get("y"), cfg.get("group"))
 
 
-def _visualizations(cells: _Cells, analysis: dict[str, Any], on_screen: list[dict[str, Any]]) -> None:
+def _visualizations(cells: _Cells, analysis: dict[str, Any], on_screen: list[dict[str, Any]], chart_source: str = "both", max_charts: int = MAX_NOTEBOOK_CHARTS) -> None:
     roles = (analysis.get("schema") or {}).get("roles") or {}
     measures = list(analysis.get("numeric_columns", []))
     cells.md("## 7. Visualizations\n\nCharts are chosen from the column roles and only where they are statistically meaningful "
@@ -377,15 +427,15 @@ def _visualizations(cells: _Cells, analysis: dict[str, Any], on_screen: list[dic
              "Where a chart summarizes a relationship, the code also prints the supporting statistic.")
     seen: set[tuple] = set()
     plan: list[tuple[dict[str, Any], str]] = []
-    for cfg in on_screen:
+    for cfg in (on_screen if chart_source in {"both", "workspace"} else []):
         if isinstance(cfg, dict) and cfg.get("type") and _chart_key(cfg) not in seen:
             seen.add(_chart_key(cfg))
             plan.append((cfg, "Chart from your workspace"))
-    for rec in analysis.get("recommendations") or []:
+    for rec in (analysis.get("recommendations") or [] if chart_source in {"both", "recommended"} else []):
         if _chart_key(rec) not in seen:
             seen.add(_chart_key(rec))
             plan.append((rec, rec.get("reason") or ""))
-    for number, (cfg, blurb) in enumerate(plan[:MAX_NOTEBOOK_CHARTS], start=1):
+    for number, (cfg, blurb) in enumerate(plan[:max_charts], start=1):
         title = cfg.get("customTitle") or cfg.get("title") or f"{cfg.get('type', 'chart').title()} {number}"
         cells.md(f"### 7.{number} {title}\n\n{blurb}".rstrip())
         cells.code(chart_code(cfg, roles, measures))
@@ -393,7 +443,7 @@ def _visualizations(cells: _Cells, analysis: dict[str, Any], on_screen: list[dic
         cells.md("No charts were recommended for this dataset.")
 
 
-def _statistics(cells: _Cells, analysis: dict[str, Any]) -> None:
+def _statistics(cells: _Cells, analysis: dict[str, Any], deep_ctx: dict[str, Any] | None = None) -> None:
     schema = analysis.get("schema") or {}
     roles = schema.get("roles") or {}
     measures = [c for c in analysis.get("numeric_columns", []) if _role(roles, c) in {"numeric", "ordinal_numeric"}]
@@ -525,6 +575,43 @@ def _statistics(cells: _Cells, analysis: dict[str, Any]) -> None:
             "    print('Fewer than 4 distinct periods - too few to fit a trend.')"
         )
 
+    if deep_ctx:
+        deep = deep_ctx["deep"]
+        strongest = deep["corr"]["strongest"]
+        cells.md("### 8.6 Deep statistical interpretation\n\n"
+                 "This goes beyond the tables above: confidence intervals, robustness checks (outlier removal, curvature, "
+                 "Simpson's paradox) and an **evidence rating** that combines significance, effect size, sample size and "
+                 "consistency across those checks. **High** = significant, a large effect, at least 30 observations, and "
+                 "unchanged by the robustness checks; **Moderate** and **Low** relax one or more of those; **Null** = no "
+                 "detectable effect at the sample size available. (Computed by DataScopia's analysis engine, the same one "
+                 "behind the PDF export - not re-derivable from a single cell, so it is presented as narrative here.)")
+        if strongest:
+            lines = ["**Relationships between variables**\n"]
+            for i, d in enumerate(strongest[:3]):
+                lines.append(f"- **{d['a']} and {d['b']}** (evidence: {d['rating']}). "
+                             + " ".join(report_deep_mod.pair_interpretation(d, caveat=(i == 0))))
+            cells.md("\n".join(lines))
+            clusters = deep["corr"].get("clusters") or []
+            if clusters:
+                cells.md("**Overlapping variables (multicollinearity).** "
+                         + "; ".join(", ".join(c) for c in clusters[:4])
+                         + " move together closely enough (|r| >= 0.5) that they carry largely the same information - treating "
+                           "them as independent evidence, or as separate model inputs, overstates what the data say.")
+        trends_series = ((deep.get("trends") or {}) or {}).get("series") or []
+        if trends_series:
+            time_name = deep["trends"]["time"]
+            lines = [f"**Change over time (by {time_name})**\n"]
+            for t_ in trends_series[:2]:
+                lines.append(f"- **{t_['measure']}.** " + " ".join(report_deep_mod.trend_interpretation(t_, time_name)))
+            cells.md("\n".join(lines))
+        posts = deep.get("posthoc") or []
+        if posts:
+            lines = ["**Differences between groups**\n"]
+            for i, (ph, g_row) in enumerate(posts[:2]):
+                lines.append(f"- **{ph['measure']} by {ph['group']}.** "
+                             + " ".join(report_deep_mod.posthoc_interpretation(ph, g_row, caveat=(i == 0))))
+            cells.md("\n".join(lines))
+
 
 def _model_features(analysis: dict[str, Any], target: str, df: pd.DataFrame) -> tuple[list[str], list[str]]:
     roles = (analysis.get("schema") or {}).get("roles") or {}
@@ -540,7 +627,8 @@ def _model_features(analysis: dict[str, Any], target: str, df: pd.DataFrame) -> 
     return numeric[:budget], categorical[: max(0, budget - len(numeric[:budget]))]
 
 
-def _modelling(cells: _Cells, analysis: dict[str, Any], df: pd.DataFrame) -> None:
+def _modelling(cells: _Cells, analysis: dict[str, Any], df: pd.DataFrame, ml: dict[str, Any] | None = None) -> None:
+    ml = ml or {"test_size": 0.25, "seed": 42, "trees": 200}
     targets = analysis.get("target_details") or []
     cells.md("## 9. Predictive modelling")
     if not targets:
@@ -585,7 +673,7 @@ def _modelling(cells: _Cells, analysis: dict[str, Any], df: pd.DataFrame) -> Non
         "# Keep rows where the target is known; cap the size so training stays quick.\n"
         "data = df.dropna(subset=[target])\n"
         "if len(data) > 20000:\n"
-        "    data = data.sample(20000, random_state=42)\n"
+        f"    data = data.sample(20000, random_state={ml['seed']})\n"
         "X = pd.DataFrame(index=data.index)\n"
         f"{num_reads}"
         "for column in categorical_features:\n"
@@ -597,7 +685,7 @@ def _modelling(cells: _Cells, analysis: dict[str, Any], df: pd.DataFrame) -> Non
         "    ('cat', OneHotEncoder(handle_unknown='ignore', min_frequency=5), categorical_features),\n"
         "])\n"
         + ("stratify = y if y.value_counts().min() >= 2 else None\n" if classification else "stratify = None\n")
-        + "X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=stratify)\n"
+        + f"X_train, X_test, y_train, y_test = train_test_split(X, y, test_size={ml['test_size']}, random_state={ml['seed']}, stratify=stratify)\n"
         "print(f'Training on {len(X_train):,} rows, testing on {len(X_test):,} held-out rows')"
     )
     if classification:
@@ -607,7 +695,7 @@ def _modelling(cells: _Cells, analysis: dict[str, Any], df: pd.DataFrame) -> Non
             "models = {\n"
             "    'Baseline (most common class)': DummyClassifier(strategy='most_frequent'),\n"
             "    'Logistic regression': LogisticRegression(max_iter=1000),\n"
-            "    'Random forest': RandomForestClassifier(n_estimators=200, min_samples_leaf=2, random_state=42, n_jobs=-1),\n"
+            f"    'Random forest': RandomForestClassifier(n_estimators={ml['trees']}, min_samples_leaf=2, random_state={ml['seed']}, n_jobs=-1),\n"
             "}\n"
             "rows, fitted = [], {}\n"
             "for name, model in models.items():\n"
@@ -633,7 +721,7 @@ def _modelling(cells: _Cells, analysis: dict[str, Any], df: pd.DataFrame) -> Non
             "models = {\n"
             "    'Baseline (predict the mean)': DummyRegressor(strategy='mean'),\n"
             "    'Ridge regression': Ridge(alpha=1.0),\n"
-            "    'Random forest': RandomForestRegressor(n_estimators=200, min_samples_leaf=2, random_state=42, n_jobs=-1),\n"
+            f"    'Random forest': RandomForestRegressor(n_estimators={ml['trees']}, min_samples_leaf=2, random_state={ml['seed']}, n_jobs=-1),\n"
             "}\n"
             "rows, fitted = [], {}\n"
             "for name, model in models.items():\n"
@@ -657,7 +745,7 @@ def _modelling(cells: _Cells, analysis: dict[str, Any], df: pd.DataFrame) -> Non
         "\n"
         "eval_X = X_test.head(2000)\n"
         "eval_y = y_test.loc[eval_X.index]\n"
-        f"importance = permutation_importance(fitted[best], eval_X, eval_y, n_repeats=5, random_state=42, scoring={scorer!r})\n"
+        f"importance = permutation_importance(fitted[best], eval_X, eval_y, n_repeats=5, random_state={ml['seed']}, scoring={scorer!r})\n"
         "ranking = pd.Series(importance.importances_mean, index=X_test.columns).sort_values(ascending=False)\n"
         "fig = px.bar(ranking.head(12)[::-1], orientation='h', labels={'value': 'Score drop when shuffled', 'index': 'column'},\n"
         f"             title='What the model relies on to predict {t_col}')\n"
@@ -691,8 +779,28 @@ def _findings(cells: _Cells, findings: list[dict[str, Any]], analysis: dict[str,
             cells.md(f"### Finding {index}: {title_text}\n\n{finding.get('summary', '')}")
 
 
-def _conclusions(cells: _Cells, analysis: dict[str, Any], report: dict[str, Any], removed_rows: int) -> None:
+def _conclusions(cells: _Cells, analysis: dict[str, Any], report: dict[str, Any], removed_rows: int, deep_ctx: dict[str, Any] | None = None) -> None:
     lines = ["## 11. Conclusions and next steps\n", "**What the analysis showed**\n"]
+    if deep_ctx:
+        deep = deep_ctx["deep"]
+        strongest = deep["corr"]["strongest"]
+        if strongest:
+            d = strongest[0]
+            direction = "positive" if d["r"] > 0 else "negative"
+            lines.append(f"- The strongest relationship found is between **{d['a']}** and **{d['b']}** (r = {d['r']:.2f}, "
+                         f"evidence: {d['rating']}), a {direction} association - see 8.6 for the full robustness check.")
+        trends_series = ((deep.get("trends") or {}) or {}).get("series") or []
+        if trends_series:
+            t_ = trends_series[0]
+            reliable = t_["p_tau"] < report_stats_mod.ALPHA
+            change = f" ({t_['change_pct']:+.0f}% first period to last)" if t_.get("change_pct") is not None else ""
+            lines.append(f"- **{t_['measure']}** " + ("shows a reliable trend" if reliable else "shows no reliable trend")
+                         + f" over {deep['trends']['time']}{change}.")
+        posts = deep.get("posthoc") or []
+        if posts:
+            ph, g_row = posts[0]
+            lines.append(f"- **{ph['group']}** is " + ("a meaningful" if g_row.get("significant") else "not a strong")
+                         + f" way to segment **{ph['measure']}** ({ph['highest']} highest, {ph['lowest']} lowest).")
     for insight in (analysis.get("insights") or [])[:8]:
         lines.append(f"- {insight}")
     quality = analysis.get("data_quality") or report
@@ -707,6 +815,26 @@ def _conclusions(cells: _Cells, analysis: dict[str, Any], report: dict[str, Any]
     cells.md("\n".join(lines))
 
 
+def _renumber(cells: list[dict[str, Any]]) -> None:
+    """Sections can be switched off, so renumber the '## N.' headings (and '### N.x' sub-headings) to stay gapless."""
+    mapping: dict[str, str] = {}
+    counter = 0
+    for cell in cells:
+        if cell["cell_type"] != "markdown" or not cell["source"]:
+            continue
+        m = re.match(r"^## (\d+)\. ", cell["source"][0])
+        if m:
+            counter += 1
+            mapping[m.group(1)] = str(counter)
+    for cell in cells:
+        if cell["cell_type"] != "markdown" or not cell["source"]:
+            continue
+        first = cell["source"][0]
+        m = re.match(r"^## (\d+)\. ", first) or re.match(r"^### (\d+)\.\d+ ", first)
+        if m and m.group(1) in mapping:
+            cell["source"][0] = first.replace(m.group(1) + ".", mapping[m.group(1)] + ".", 1)
+
+
 # ----------------------------------------------------------------------------- public API
 
 def build_notebook(
@@ -719,6 +847,7 @@ def build_notebook(
     transform_log: list[dict[str, Any]] | None = None,
     dataset: dict[str, Any] | None = None,
     charts: list[dict[str, Any]] | None = None,
+    options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the notebook (a plain nbformat-4.5 dict).
 
@@ -748,23 +877,52 @@ def build_notebook(
         dataset = {**dataset, "sample": sample}
     report_before = quality_mod.build_quality_report(original, schema_mod.build_schema(original), analysis.get("target_details") or []) if not original.empty else analysis.get("data_quality") or {"score": 0, "label": "", "counts": {"high": 0, "medium": 0, "low": 0}, "issues": []}
 
+    # Same deep-analysis engine as the PDF export (Fisher CIs, robustness checks, evidence ratings), run once and
+    # reused for the "deep interpretation" subsection, the conclusions and the reproducibility fingerprint - so a
+    # notebook and a PDF of the same dataset carry the same statistical depth, not a lighter, code-only version.
+    deep_ctx: dict[str, Any] | None = None
+    if not final.empty and len(final) >= 8:
+        try:
+            schema_full = schema_mod.build_schema(final)
+            S_full = report_stats_mod.compute_all(final, analysis, schema_full)
+            deep_full = report_deep_mod.compute_deep(final, analysis, schema_full, S_full)
+            deep_ctx = {"S": S_full, "deep": deep_full, "fingerprint": report_stats_mod.data_fingerprint(final)}
+        except Exception:
+            deep_ctx = None
+
     cells = _Cells()
     slug = _kaggle_slug(dataset)
-    _intro(cells, title, name, analysis, slug)
+    opt = normalize_options(options)
+    on = opt["sections"]
+    _intro(cells, title, name, analysis, slug, opt, fingerprint=(deep_ctx or {}).get("fingerprint"))
     _source_and_license(cells, name, dataset)
     if preview_only:
         cells.md("> **Note:** the server no longer holds this dataset's data (the session expired), so this notebook embeds only the "
                  "~300-row preview. Re-open the dataset in the workspace and export again for the full analysis.")
-    _loading(cells, original, dataset, analysis, name)
-    _quality_before(cells, report_before)
-    cleaned = _cleaning(cells, original, transform_log, final)
-    _structure(cells, analysis)
-    _summary_stats(cells, analysis)
-    _visualizations(cells, analysis, list(charts or []))
-    _statistics(cells, analysis)
-    _modelling(cells, analysis, final)
-    _findings(cells, findings, analysis)
-    _conclusions(cells, analysis, report_before, max(0, len(original) - len(cleaned)))
+    _loading(cells, original, dataset, analysis, name, opt["embed_rows"])
+    if on["quality"]:
+        _quality_before(cells, report_before)
+    if on["cleaning"]:
+        cleaned = _cleaning(cells, original, transform_log, final)
+    else:
+        # cleaning was excluded from the notebook, so the analysis below runs on the data as loaded
+        cleaned = original
+        transform_log = []
+    if on["structure"]:
+        _structure(cells, analysis)
+    if on["summary"]:
+        _summary_stats(cells, analysis)
+    if on["visualizations"]:
+        _visualizations(cells, analysis, list(charts or []), opt["chart_source"], opt["max_charts"])
+    if on["statistics"]:
+        _statistics(cells, analysis, deep_ctx)
+    if on["modelling"]:
+        _modelling(cells, analysis, final, opt["ml"])
+    if on["findings"]:
+        _findings(cells, findings, analysis)
+    if on["conclusions"]:
+        _conclusions(cells, analysis, report_before, max(0, len(original) - len(cleaned)), deep_ctx)
+    _renumber(cells.cells)
 
     return {
         "cells": cells.cells,

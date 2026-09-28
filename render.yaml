@@ -23,3 +23,13 @@ services:
         sync: false
       - key: APP_TITLE
         value: DataScopia
+      # Accounts use Firebase Authentication. Paste the service-account key JSON (Firebase console ->
+      # Project settings -> Service accounts -> Generate new private key) into this secret, plus your
+      # Realtime Database URL (Build -> Realtime Database -> top of the Data tab), so projects and published
+      # analyses are stored in the Realtime Database + Cloud Storage and survive redeploys. See docs/FIREBASE_SETUP.md.
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
+      - key: FIREBASE_DATABASE_URL
+        sync: false
+      - key: DATASCOPIA_AUTH
+        value: firebase

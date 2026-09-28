@@ -1,0 +1,9 @@
+{
+  "rules": {
+    "projects": { ".indexOn": ["owner"] },
+    "shares": { ".indexOn": ["owner", "public"] },
+    "dataset_index": { ".indexOn": ["public"] },
+    ".read": false,
+    ".write": false
+  }
+}

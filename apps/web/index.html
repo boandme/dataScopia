@@ -8,8 +8,8 @@
     <link rel="stylesheet" href="/assets/styles.css">
   </head>
   <body>
-    <div class="app">
-      <header class="site-header">
+    <header class="site-header">
+      <div class="site-header-inner">
         <a class="brand" href="#/datasets" aria-label="DataScopia home">
           <svg class="brand-mark" width="36" height="36" viewBox="0 0 34 34" fill="none">
             <circle cx="17" cy="17" r="14.5" stroke="url(#logoGrad)" stroke-width="2.4"/>
@@ -34,15 +34,46 @@
         <nav class="site-nav" id="site-nav" aria-label="Main">
           <a href="#/datasets" data-nav="datasets">Datasets</a>
           <a href="#/overview" data-nav="overview" class="needs-data">Overview</a>
-          <a href="#/workspace" data-nav="workspace" class="needs-data">Workspace</a>
+          <a href="#/visualization" data-nav="visualization" class="needs-data">Visualization</a>
           <a href="#/ask" data-nav="ask" class="needs-data">Ask</a>
           <a href="#/export" data-nav="export" class="needs-data">Export <span class="nav-count" id="nav-findings-count" hidden></span></a>
+          <a href="#/explore" data-nav="explore">Explore</a>
+          <a href="#/projects" data-nav="projects">Projects</a>
+          <a href="#/changelog" data-nav="changelog">Changelog <span class="nav-version" id="nav-version" hidden></span></a>
         </nav>
         <div class="top-controls">
+          <button class="btn secondary tour-icon" id="tour-btn" type="button" title="Quick tour" aria-label="Quick tour" hidden>?</button>
           <span class="dataset-pill" id="nav-dataset" hidden></span>
+          <span class="save-status" id="save-status" hidden></span>
           <button class="btn secondary" id="save-analysis-btn" hidden>Save analysis</button>
+          <button class="btn auth-btn-cta" id="auth-btn" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+            Sign in
+          </button>
+          <div class="account-menu" id="account-menu" hidden>
+            <button type="button" class="account-chip" id="account-chip" aria-haspopup="true" aria-expanded="false">
+              <span class="avatar-ring"><span class="avatar" id="account-avatar">A</span></span>
+              <span id="account-name">Account</span>
+              <svg class="account-chip-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="account-dropdown" id="account-dropdown" hidden>
+              <div class="account-who">
+                <span class="avatar-ring avatar-ring-lg"><span class="avatar" id="account-dd-avatar">A</span></span>
+                <span class="account-who-text"><strong id="account-dd-name"></strong><span id="account-dd-email"></span></span>
+              </div>
+              <div class="account-dropdown-links">
+                <a href="#/projects"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg> My projects</a>
+                <a href="#/explore"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg> Explore analyses</a>
+                <button type="button" id="account-settings-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Account settings</button>
+                <button type="button" id="signout-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Sign out</button>
+              </div>
+            </div>
+          </div>
         </div>
+      </div>
       </header>
+    <div class="app">
+
 
       <div class="modal-overlay" id="save-name-overlay" hidden>
         <div class="modal-box">
@@ -54,6 +85,157 @@
           </div>
         </div>
       </div>
+
+      <div class="modal-overlay" id="export-title-overlay" hidden>
+        <div class="modal-box export-title-box" role="dialog" aria-modal="true" aria-labelledby="export-title-heading">
+          <h3 id="export-title-heading">Title your export</h3>
+          <p class="hint" id="export-title-hint">Give it a title before it is generated.</p>
+          <label class="ef"><span>Title</span>
+            <input type="text" id="export-title-input" maxlength="140" autocomplete="off" />
+          </label>
+          <label class="ef" style="margin-top: 10px;"><span>File name</span>
+            <span class="ef-file"><input type="text" id="export-title-file" maxlength="90" autocomplete="off" /><b class="ext" id="export-title-ext"></b></span>
+          </label>
+          <p class="ef-hint" id="export-title-error" hidden style="color: var(--danger);">A title is required.</p>
+          <div class="editor" style="margin-top: 14px; justify-content: flex-end;">
+            <button class="btn secondary" id="export-title-cancel" type="button">Cancel</button>
+            <button class="btn" id="export-title-confirm" type="button">Export</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-overlay" id="auth-overlay" hidden>
+        <div class="modal-box auth-box auth-box-split" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+          <button type="button" class="welcome-close" id="auth-close" aria-label="Close">&times;</button>
+          <div class="auth-visual" aria-hidden="true">
+            <div class="auth-visual-blob auth-visual-blob-a"></div>
+            <div class="auth-visual-blob auth-visual-blob-b"></div>
+            <div class="auth-visual-content">
+              <span class="auth-visual-mark">&#9673;</span>
+              <h4>DataScopia</h4>
+              <p>Verified analysis, everywhere you work.</p>
+              <ul class="auth-visual-points">
+                <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg> Cloud projects, synced everywhere</li>
+                <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg> Verified, shareable analyses</li>
+                <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg> The dataset graph, joinable data</li>
+              </ul>
+            </div>
+          </div>
+          <div class="auth-panel">
+            <h3 id="auth-title">Sign in to DataScopia</h3>
+            <p class="hint" id="auth-reason">Save projects, publish verified analyses and pick up where you left off on any device.</p>
+            <div class="seg auth-tabs" role="tablist"><button type="button" class="on" data-auth-tab="login">Sign in</button><button type="button" data-auth-tab="register">Create account</button></div>
+            <div id="auth-google-block" hidden>
+              <button type="button" class="btn secondary google-btn" id="auth-google"><svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-4 6.7-9.9 6.7-17.4z"/><path fill="#FBBC05" d="M10.5 28.7A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.9-4.7l-7.9-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.6 2.3-8.6 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg> Continue with Google</button>
+              <div class="auth-or"><span>or use your email</span></div>
+            </div>
+            <form id="auth-form" novalidate class="auth-form">
+              <label class="auth-field" id="auth-name-row" hidden>
+                <span>Display name</span>
+                <span class="auth-input-wrap">
+                  <svg class="auth-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7.5" r="4.5"/></svg>
+                  <input type="text" id="auth-name" maxlength="60" autocomplete="nickname" placeholder="Shown on analyses you publish" />
+                </span>
+              </label>
+              <label class="auth-field">
+                <span>Email</span>
+                <span class="auth-input-wrap">
+                  <svg class="auth-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.2"/><path d="m4 7 8 6 8-6"/></svg>
+                  <input type="email" id="auth-email" autocomplete="email" required />
+                </span>
+              </label>
+              <label class="auth-field">
+                <span>Password</span>
+                <span class="auth-input-wrap">
+                  <svg class="auth-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2"/><path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7"/></svg>
+                  <input type="password" id="auth-password" autocomplete="current-password" minlength="8" required />
+                  <button type="button" class="auth-eye" id="auth-eye" aria-label="Show password" tabindex="-1">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 12S5 5 12 5s10.5 7 10.5 7-3.5 7-10.5 7S1.5 12 1.5 12z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                </span>
+              </label>
+              <p class="ef-hint" id="auth-hint" hidden>At least 8 characters.</p>
+              <p class="auth-error" id="auth-error" hidden></p>
+              <button class="btn auth-submit-btn" type="submit" id="auth-submit">Sign in</button>
+              <button type="button" class="link-btn" id="auth-forgot" hidden>Forgot your password?</button>
+            </form>
+            <button type="button" class="auth-local" id="auth-local" hidden>Just save in this browser instead</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-overlay" id="settings-overlay" hidden>
+        <div class="modal-box auth-box" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+          <button type="button" class="welcome-close" id="settings-close" aria-label="Close">&times;</button>
+          <h3 id="settings-title">Account settings</h3>
+          <div class="settings-block">
+            <h4><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7.5" r="4.5"/></svg> Profile</h4>
+            <label class="auth-field"><span>Display name</span>
+              <span class="auth-input-wrap"><input type="text" id="settings-name" maxlength="60" /></span>
+            </label>
+            <button class="btn secondary" type="button" id="settings-save-name">Save name</button>
+          </div>
+          <div class="settings-block" id="settings-password-block">
+            <h4><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2"/><path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7"/></svg> Change password</h4>
+            <label class="auth-field"><span>Current password</span>
+              <span class="auth-input-wrap"><input type="password" id="settings-current" autocomplete="current-password" /></span>
+            </label>
+            <label class="auth-field"><span>New password</span>
+              <span class="auth-input-wrap"><input type="password" id="settings-new" autocomplete="new-password" minlength="8" /></span>
+            </label>
+            <button class="btn secondary" type="button" id="settings-change-password">Change password</button>
+          </div>
+          <div class="settings-block danger-zone">
+            <h4><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg> Delete account</h4>
+            <p class="hint">Permanently deletes your account, projects and published analyses.</p>
+            <label class="auth-field"><span>Confirm with your password</span>
+              <span class="auth-input-wrap"><input type="password" id="settings-delete-password" autocomplete="current-password" /></span>
+            </label>
+            <button class="btn danger-btn" type="button" id="settings-delete">Delete my account</button>
+          </div>
+          <p class="auth-error" id="settings-message" hidden></p>
+        </div>
+      </div>
+
+      <div class="modal-overlay" id="publish-overlay" hidden>
+        <div class="modal-box auth-box" role="dialog" aria-modal="true" aria-labelledby="publish-title">
+          <button type="button" class="welcome-close" id="publish-close" aria-label="Close">&times;</button>
+          <h3 id="publish-title">Publish a verified analysis</h3>
+          <p class="hint">Anyone with the link can see your findings and re-run verification: the server replays your cleaning steps on the stored data and recomputes every number. Raw data is never shown.</p>
+          <label class="ef"><span>Title</span><input type="text" id="publish-name" maxlength="140" /></label>
+          <label class="ef" style="margin-top: 10px;"><span>Description</span><textarea id="publish-description" rows="3" maxlength="1200" placeholder="What question does this answer? What should readers take away?"></textarea></label>
+          <div class="ef" style="margin-top: 10px;"><span class="ef-label">Who can find it</span>
+            <div class="seg" id="publish-visibility"><button type="button" class="on" data-value="public">Public (listed in Explore)</button><button type="button" data-value="unlisted">Anyone with the link</button></div></div>
+          <label class="ef ef-toggle" style="margin-top: 12px;"><input type="checkbox" id="publish-reuse" /> <span>Let others fork this analysis and download a notebook with a data snapshot</span></label>
+          <p class="ef-hint" id="publish-reuse-note"></p>
+          <p class="auth-error" id="publish-error" hidden></p>
+          <div class="editor" style="margin-top: 14px; justify-content: flex-end;">
+            <button class="btn secondary" id="publish-cancel" type="button">Cancel</button>
+            <button class="btn" id="publish-confirm" type="button">Publish and verify</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-overlay" id="join-overlay" hidden>
+        <div class="modal-box join-box" role="dialog" aria-modal="true" aria-labelledby="join-title">
+          <button type="button" class="welcome-close" id="join-close" aria-label="Close">&times;</button>
+          <h3 id="join-title">Combine datasets</h3>
+          <p class="hint" id="join-sub"></p>
+          <div class="ef-grid">
+            <label class="ef ef-wide"><span>Match on</span><select id="join-option"></select></label>
+            <div class="ef ef-wide"><span class="ef-label">Rows to keep</span>
+              <div class="seg" id="join-how"><button type="button" class="on" data-value="left">All of my rows</button><button type="button" data-value="inner">Only rows that match</button></div></div>
+          </div>
+          <div id="join-preview" class="join-preview"><p class="hint">Building preview...</p></div>
+          <p class="auth-error" id="join-error" hidden></p>
+          <div class="editor" style="margin-top: 14px; justify-content: flex-end;">
+            <button class="btn secondary" id="join-cancel" type="button">Cancel</button>
+            <button class="btn" id="join-confirm" type="button" disabled>Create combined dataset</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="toast-host" id="toast-host" aria-live="polite"></div>
 
       <main id="page-host">
         <!-- ============ Datasets (home) ============ -->
@@ -99,6 +281,38 @@
         <!-- ============ Overview ============ -->
         <section class="page" data-page="overview" data-title="Overview" data-requires="dataset">
           <div class="page-head"><h1>Overview</h1><p class="hint">What is in this dataset, how clean it is, and what each column means.</p></div>
+          <section class="panel welcome-card" id="welcome-card" hidden>
+            <div class="welcome-head">
+              <div>
+                <div class="welcome-kicker">Dataset loaded</div>
+                <h2>You're in. Here's where to go next.</h2>
+                <p class="hint">This Overview is just the starting point. The real work happens in the tabs along the top:</p>
+              </div>
+              <button type="button" class="welcome-close" id="welcome-dismiss" aria-label="Dismiss this guide" title="Dismiss">&times;</button>
+            </div>
+            <div class="welcome-steps">
+              <a class="welcome-step" href="#/overview" data-step-scroll="quality-panel" style="--wc:#34d399">
+                <span class="welcome-num">1</span><strong>Check quality</strong>
+                <span>See the quality score below and fix problems in one click.</span>
+              </a>
+              <a class="welcome-step" href="#/visualization" style="--wc:#38bdf8">
+                <span class="welcome-num">2</span><strong>Visualization</strong>
+                <span>Recommended charts, maps and time series, plus editors to clean and filter.</span>
+              </a>
+              <a class="welcome-step" href="#/ask" style="--wc:#e2409b">
+                <span class="welcome-num">3</span><strong>Ask</strong>
+                <span>Type a question in plain English and get an answer computed from your data.</span>
+              </a>
+              <a class="welcome-step" href="#/export" style="--wc:#ffd23a">
+                <span class="welcome-num">4</span><strong>Export</strong>
+                <span>Download a runnable notebook, a PDF report or the quality report.</span>
+              </a>
+            </div>
+            <div class="welcome-actions">
+              <button type="button" class="btn" id="welcome-tour-btn">Take the 30-second tour</button>
+              <button type="button" class="btn secondary" id="welcome-dismiss-2">Got it, I'll explore</button>
+            </div>
+          </section>
           <div class="overview-row">
             <section class="panel" id="overview-panel">
             <h2>Dataset Overview</h2>
@@ -142,11 +356,23 @@
             </div>
           </section>
           </div>
-          <div class="next-step"><a class="btn" href="#/workspace">Build charts in the Workspace →</a></div>
+          <section class="panel graph-panel" id="graph-panel">
+            <div class="graph-head">
+              <div>
+                <h2>Combine with other datasets</h2>
+                <p class="hint" id="graph-hint">The dataset graph compares the join keys of this dataset (countries, years, IDs) with a growing catalogue, the built-in library and your own projects.</p>
+              </div>
+              <div class="graph-stat" id="graph-stat"></div>
+            </div>
+            <div id="graph-keys" class="graph-keys"></div>
+            <div id="graph-results" class="graph-results"><p class="hint">Scanning for datasets that can be combined...</p></div>
+            <button class="btn secondary" id="graph-rescan" type="button" hidden>Scan again</button>
+          </section>
+          <div class="next-step"><a class="btn" href="#/visualization">Build charts in Visualization →</a></div>
         </section>
 
         <!-- ============ Workspace ============ -->
-        <section class="page" data-page="workspace" data-title="Workspace" data-requires="dataset">
+        <section class="page" data-page="visualization" data-title="Visualization" data-requires="dataset">
           <section class="panel" id="workspace-panel">
             <p class="hint" id="workspace-empty-hint">Load a dataset to start building charts and dataset editors.</p>
             <div id="viz-section" hidden>
@@ -277,23 +503,17 @@
         <!-- ============ Export ============ -->
         <section class="page" data-page="export" data-title="Export" data-requires="dataset">
           <div class="page-head"><h1>Export &amp; findings</h1><p class="hint" id="export-summary"></p></div>
-          <div class="export-grid">
-            <div class="panel export-card">
-              <h3>Jupyter notebook</h3>
-              <p class="hint">A runnable notebook: data loading, quality audit, your exact cleaning steps, charts, statistical tests and a baseline model.</p>
-              <button class="btn" id="export-notebook-btn">Export notebook (.ipynb)</button>
+          <div class="export-grid" id="export-grid"></div>
+          <section class="panel publish-panel" id="publish-panel">
+            <div>
+              <h3>Publish a verified analysis</h3>
+              <p class="hint">Give this analysis a public link with a reproducibility hash. Readers can re-run verification (the server replays your cleaning steps and recomputes every number), download a PDF or notebook, and - if you allow it - fork it into their own project.</p>
             </div>
-            <div class="panel export-card">
-              <h3>PDF research report</h3>
-              <p class="hint">A shareable report with a written interpretation of each chart and a conclusion.</p>
-              <button class="btn" id="export-report-btn">Export report (PDF)</button>
+            <div class="publish-actions">
+              <button class="btn" id="publish-open-btn" type="button">Publish analysis</button>
+              <span class="hint" id="publish-status"></span>
             </div>
-            <div class="panel export-card">
-              <h3>Data quality report</h3>
-              <p class="hint">The scored audit and its suggested fixes, as Markdown.</p>
-              <button class="btn" id="export-quality-btn">Download (.md)</button>
-            </div>
-          </div>
+          </section>
           <section class="panel">
             <div class="findings" id="findings" hidden>
             <h3>Saved findings</h3>
@@ -301,6 +521,47 @@
           </div>
             <p class="hint" id="findings-empty">No findings saved yet. Use the bookmark icon on a chart, or "Save as finding" on an answer.</p>
           </section>
+        </section>
+
+        <!-- ============ Changelog ============ -->
+        <section class="page" data-page="changelog" data-title="Changelog">
+          <div class="cl-hero">
+            <div>
+              <div class="cl-kicker">Release history</div>
+              <h1>DataScopia <span>Changelog</span></h1>
+              <p>How DataScopia grew from a Kaggle profiler into a reproducible analysis workspace. Every release below is loaded live from the API.</p>
+            </div>
+            <div class="cl-hero-mark" aria-hidden="true">◎</div>
+          </div>
+          <div class="cl-stats" id="cl-stats"></div>
+          <div class="cl-toolbar">
+            <div class="cl-filters" id="cl-filters" role="group" aria-label="Filter by category"></div>
+            <input type="search" id="cl-search" placeholder="Search releases..." aria-label="Search releases" />
+          </div>
+          <div class="cl-timeline" id="cl-timeline"><p class="hint">Loading release history...</p></div>
+          <p class="cl-footnote">This page records major milestones; small fixes are grouped into the closest release.</p>
+        </section>
+
+        <!-- ============ Explore (public verified analyses) ============ -->
+        <section class="page" data-page="explore" data-title="Explore">
+          <div class="page-head"><h1>Explore verified analyses</h1><p class="hint" id="explore-sub">Published analyses you can re-verify, download and fork.</p></div>
+          <div class="explore-toolbar">
+            <input type="search" id="explore-search" placeholder="Search titles, datasets, authors..." aria-label="Search analyses" />
+            <div class="seg" id="explore-sort" role="radiogroup"><button type="button" class="on" data-value="new">Newest</button><button type="button" data-value="forks">Most forked</button><button type="button" data-value="views">Most viewed</button></div>
+            <label class="ef-check"><input type="checkbox" id="explore-verified" /> Verified only</label>
+          </div>
+          <div class="explore-grid" id="explore-grid"><p class="hint">Loading...</p></div>
+        </section>
+
+        <!-- ============ Projects (your account) ============ -->
+        <section class="page" data-page="projects" data-title="Projects">
+          <div class="page-head"><h1>Your projects</h1><p class="hint">Saved to your account: the original data, your cleaning steps, findings and charts. Open one to continue exactly where you stopped.</p></div>
+          <div id="projects-body"></div>
+        </section>
+
+        <!-- ============ A published analysis ============ -->
+        <section class="page" data-page="analysis" data-title="Analysis">
+          <div id="analysis-body"><p class="hint">Loading analysis...</p></div>
         </section>
 
         <!-- shown instead of a data page when nothing is loaded -->
@@ -315,5 +576,7 @@
     </div>
 
     <script src="/assets/app.js"></script>
+    <script src="/assets/social.js"></script>
+    <script type="module" src="/assets/firebase-client.js"></script>
   </body>
 </html>

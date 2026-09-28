@@ -343,16 +343,76 @@ def build_quality_report(df: pd.DataFrame, schema: dict[str, Any], targets: list
             "rows": int(len(df)), "columns": int(df.shape[1])}
 
 
-def quality_markdown(report: dict[str, Any], dataset_name: str) -> str:
+QUALITY_FORMATS = {"md": ("text/markdown", "md"), "json": ("application/json", "json"), "csv": ("text/csv", "csv")}
+
+
+def normalize_quality_options(options: dict[str, Any] | None) -> dict[str, Any]:
+    o = options if isinstance(options, dict) else {}
+    severities = [s for s in (o.get("severities") or ["high", "medium", "low"]) if s in {"high", "medium", "low"}] or ["high", "medium", "low"]
+    return {
+        "format": o.get("format") if o.get("format") in QUALITY_FORMATS else "md",
+        "severities": severities,
+        "include_why": o.get("include_why", True) is not False,
+        "include_examples": o.get("include_examples", True) is not False,
+        "include_fixes": o.get("include_fixes", True) is not False,
+        "group_by": o.get("group_by") if o.get("group_by") in {"category", "severity"} else "category",
+        "title": str(o.get("title") or "").strip()[:140],
+        "author": str(o.get("author") or "").strip()[:120],
+        "notes": str(o.get("notes") or "").strip()[:1500],
+    }
+
+
+def quality_export(report: dict[str, Any], dataset_name: str, options: dict[str, Any] | None = None) -> tuple[str, str, str]:
+    """(content, mimetype, extension) for the quality report in the chosen format, honouring the
+    severity filter and which explanatory parts (why / examples / fixes) to include."""
+    import csv
+    import io
+    import json as _json
+
+    opt = normalize_quality_options(options)
+    issues = [i for i in report["issues"] if i["severity"] in opt["severities"]]
+    mimetype, ext = QUALITY_FORMATS[opt["format"]]
+    if opt["format"] == "json":
+        payload = {"dataset": dataset_name, "score": report["score"], "label": report["label"], "rows": report["rows"], "columns": report["columns"], "counts": report["counts"],
+                   "issues": [{"category": i["category"], "severity": i["severity"], "columns": i["columns"], "title": i["title"], "detail": i["detail"],
+                               **({"why": i["why"]} if opt["include_why"] else {}), **({"examples": i["examples"]} if opt["include_examples"] else {}),
+                               **({"fix": i["fix"]} if opt["include_fixes"] else {})} for i in issues]}
+        return _json.dumps(payload, indent=2, ensure_ascii=False), mimetype, ext
+    if opt["format"] == "csv":
+        buf = io.StringIO()
+        columns = ["severity", "category", "columns", "title", "detail"] + (["why"] if opt["include_why"] else []) + (["examples"] if opt["include_examples"] else []) + (["fix"] if opt["include_fixes"] else [])
+        writer = csv.writer(buf)
+        writer.writerow(columns)
+        for i in issues:
+            row = [i["severity"], i["category"], "; ".join(i["columns"]), i["title"], i["detail"]]
+            if opt["include_why"]:
+                row.append(i["why"])
+            if opt["include_examples"]:
+                row.append("; ".join(i["examples"]))
+            if opt["include_fixes"]:
+                row.append(f"{i['fix']['type']} {i['fix']['params']}" if i["fix"] else "")
+            writer.writerow(row)
+        return buf.getvalue(), mimetype, ext
+    return quality_markdown(report, dataset_name, opt, issues), mimetype, ext
+
+
+def quality_markdown(report: dict[str, Any], dataset_name: str, options: dict[str, Any] | None = None, issues: list[dict[str, Any]] | None = None) -> str:
     """The report as a standalone Markdown document."""
-    lines = [f"# Data quality report: {dataset_name}", "",
+    opt = normalize_quality_options(options)
+    issues = report["issues"] if issues is None else issues
+    lines = [f"# {opt['title'] or 'Data quality report: ' + dataset_name}", ""]
+    if opt["author"]:
+        lines += [f"*Prepared by {opt['author']}.*", ""]
+    if opt["notes"]:
+        lines += [f"> {opt['notes']}", ""]
+    lines += [
              f"**Overall: {report['label']} ({report['score']}/100)** - {report['rows']:,} rows x {report['columns']} columns. "
              f"{report['counts']['high']} high, {report['counts']['medium']} medium, {report['counts']['low']} low severity findings.", ""]
-    if not report["issues"]:
-        lines.append("No data-quality issues were detected.")
+    if not issues:
+        lines.append("No data-quality issues were detected." if not report["issues"] else "No issues match the selected severities.")
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for issue in report["issues"]:
-        grouped.setdefault(issue["category"], []).append(issue)
+    for issue in issues:
+        grouped.setdefault(issue["category"] if opt["group_by"] == "category" else issue["severity"], []).append(issue)
     titles = {"missingness": "Missing data", "duplicates": "Duplicates", "formats": "Inconsistent formats", "suspicious": "Suspicious values",
               "outliers": "Outliers", "structure": "Column structure", "schema": "Schema problems", "leakage": "Leakage risk"}
     for category, items in grouped.items():
@@ -360,10 +420,11 @@ def quality_markdown(report: dict[str, Any], dataset_name: str) -> str:
         for issue in items:
             lines.append(f"### [{issue['severity'].upper()}] {issue['title']}")
             lines.append(issue["detail"])
-            lines.append(f"*Why it matters:* {issue['why']}")
-            if issue["examples"]:
+            if opt["include_why"]:
+                lines.append(f"*Why it matters:* {issue['why']}")
+            if opt["include_examples"] and issue["examples"]:
                 lines.append(f"*Examples:* {', '.join(issue['examples'])}")
-            if issue["fix"]:
+            if opt["include_fixes"] and issue["fix"]:
                 lines.append(f"*Suggested fix:* `{issue['fix']['type']}` {issue['fix']['params']}")
             lines.append("")
     return "\n".join(lines)

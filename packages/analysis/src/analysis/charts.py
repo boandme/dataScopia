@@ -54,8 +54,12 @@ PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9
 OTHER_COLOR = "#898781"
 # One-hue sequential ramp for magnitude: dark = low, light = high on a dark surface.
 SEQUENTIAL = [[0.0, "#0d366b"], [0.2, "#184f95"], [0.4, "#256abf"], [0.6, "#3987e5"], [0.8, "#86b6ef"], [1.0, "#cde2fb"]]
+# Magnitude ramp used by default so charts stand out: indigo -> violet -> magenta -> orange -> gold.
+# Lightness still rises monotonically (dark = low, light = high on the dark surface), so it reads
+# as a proper sequential scale even though it passes through several hues.
+VIVID = [[0.0, "#5546e0"], [0.25, "#9340d6"], [0.5, "#e2409b"], [0.75, "#ff7d47"], [1.0, "#ffd23a"]]
 # Two hues with a neutral midpoint, for signed quantities such as correlation.
-DIVERGING = [[0.0, "#3987e5"], [0.25, "#2b5a94"], [0.5, "#383835"], [0.75, "#a94f4f"], [1.0, "#e66767"]]
+DIVERGING = [[0.0, "#2f7bff"], [0.25, "#3a5fb0"], [0.5, "#2a2e45"], [0.75, "#b84a63"], [1.0, "#ff5c7a"]]
 INK = "#e5e7eb"
 INK_MUTED = "#a3a9b8"
 GRID = "rgba(148,163,184,0.14)"
@@ -107,11 +111,20 @@ def _axis(title: str | None = None, **extra: Any) -> dict[str, Any]:
         "gridcolor": GRID,
         "zerolinecolor": AXIS_LINE,
         "linecolor": AXIS_LINE,
-        "tickfont": {"color": INK_MUTED},
+        # A closed, ticked frame (all four sides bordered, small outward tick marks on the labelled
+        # sides) is what makes a plot read as "properly axed" rather than numbers floating on a grid -
+        # standard practice in scientific/journal-style figures, and it applies equally to x and y so
+        # neither axis looks like an afterthought next to the other.
+        "showline": True,
+        "mirror": True,
+        "ticks": "outside",
+        "tickcolor": AXIS_LINE,
+        "ticklen": 5,
+        "tickfont": {"color": INK_MUTED, "size": 11},
         "automargin": True,
     }
     if title:
-        axis["title"] = {"text": title, "font": {"color": INK_MUTED, "size": 12}}
+        axis["title"] = {"text": title, "font": {"color": INK_MUTED, "size": 12.5}}
     axis.update(extra)
     return axis
 
@@ -290,7 +303,7 @@ def _histogram(df: pd.DataFrame, cfg: dict[str, Any], schema: dict[str, Any]) ->
     else:
         counts, _ = np.histogram(clean, bins=edges)
         data.append({"type": "bar", "x": centers, "y": counts, "width": widths * 0.96, "name": str(x),
-                     "marker": {"color": _color(0)},
+                     "marker": {"color": counts, "colorscale": VIVID, "showscale": False, "line": {"width": 0}},
                      "hovertemplate": "%{customdata[0]:.4g} to %{customdata[1]:.4g}: %{y} rows<extra></extra>",
                      "customdata": np.column_stack([edges[:-1], edges[1:]]), "showlegend": False})
         mean, median = float(clean.mean()), float(clean.median())
@@ -388,7 +401,8 @@ def _bar(df: pd.DataFrame, cfg: dict[str, Any], schema: dict[str, Any]) -> dict[
     else:
         sub = table.groupby("x")["value"].sum().reindex(order)
         data.append({"type": "bar", "x": [_short(c) for c in order], "y": sub.tolist(), "name": label,
-                     "marker": {"color": _color(0)}, "showlegend": False,
+                     "marker": {"color": sub.fillna(0).tolist(), "colorscale": VIVID, "showscale": False, "line": {"width": 0}},
+                     "showlegend": False,
                      "hovertemplate": "%{x}: %{y:,.4g}<extra></extra>"})
         barmode = "group"
 
@@ -485,10 +499,14 @@ def _line(df: pd.DataFrame, cfg: dict[str, Any], schema: dict[str, Any], kind: s
         series = [(label, table)]
     many_points = len(table) > 60
     for i, (name, sub) in enumerate(series):
+        # a wide, faint copy of the line underneath gives it a glow so it stands out on the dark surface
+        data.append({"type": "scatter", "mode": "lines", "x": sub["x"], "y": sub["value"], "hoverinfo": "skip",
+                     "showlegend": False, "line": {"color": _color(i) + "30", "width": 11}})
         trace: dict[str, Any] = {
             "type": "scatter", "mode": "lines" if many_points else "lines+markers", "x": sub["x"], "y": sub["value"],
-            "name": _short(name), "line": {"color": _color(i), "width": 2},
-            "marker": {"size": 6, "color": _color(i)},
+            "name": _short(name), "line": {"color": _color(i), "width": 3.2},
+            "marker": ({"size": 9, "color": sub["value"], "colorscale": VIVID, "showscale": False, "line": {"width": 2, "color": "#0c1020"}}
+                       if len(series) == 1 else {"size": 8, "color": _color(i), "line": {"width": 2, "color": "#0c1020"}}),
             "hovertemplate": f"{_short(name)}<br>%{{x}}: %{{y:,.4g}}<extra></extra>",
         }
         if kind == "area":
@@ -566,13 +584,24 @@ def _scatter(df: pd.DataFrame, cfg: dict[str, Any], schema: dict[str, Any]) -> d
             notes.append(f"Colours show the {MAX_OVERLAP_GROUPS} largest '{group}' groups; the rest are grey.")
     else:
         data.append({"type": "scatter", "mode": "markers", "x": shown["x"], "y": shown["y"], "name": f"{x} vs {y}",
-                     "marker": {"color": _color(0), "size": 6, "opacity": 0.65, "line": {"width": 0.5, "color": "#0c1020"}},
+                     "marker": {"color": shown["y"], "colorscale": VIVID, "showscale": False, "size": 8, "opacity": 0.85,
+                                "line": {"width": 0.5, "color": "#0c1020"}},
                      "showlegend": False})
+    # A straight line fit through skewed/heavy-tailed data (e.g. income-like measures) can shoot far
+    # outside the actual data's y-range by the time it reaches the x extremes - Plotly's autorange
+    # would then stretch the y-axis to fit that overshoot, squeezing every real point into a sliver
+    # of the plot. The axis range is fixed to the data itself (with a little padding) so the trend
+    # line can run off the top/bottom of the frame - normal for an extrapolated fit - without
+    # distorting the scale the actual points are read against.
+    y_lo, y_hi = float(frame["y"].min()), float(frame["y"].max())
+    y_pad = (y_hi - y_lo) * 0.06 or max(abs(y_hi), 1.0) * 0.1
+    x_lo, x_hi = float(frame["x"].min()), float(frame["x"].max())
+    x_pad = (x_hi - x_lo) * 0.04 or max(abs(x_hi), 1.0) * 0.1
     if trend:
-        x0, x1 = float(frame["x"].min()), float(frame["x"].max())
-        data.append({"type": "scatter", "mode": "lines", "x": [x0, x1], "y": [trend["intercept"] + trend["slope"] * x0, trend["intercept"] + trend["slope"] * x1],
+        data.append({"type": "scatter", "mode": "lines", "x": [x_lo, x_hi], "y": [trend["intercept"] + trend["slope"] * x_lo, trend["intercept"] + trend["slope"] * x_hi],
                      "name": "Linear trend", "line": {"color": INK, "width": 2, "dash": "dash"}, "hoverinfo": "skip"})
-    layout = {"xaxis": _axis(cfg.get("xlabel") or str(x)), "yaxis": _axis(cfg.get("ylabel") or str(y))}
+    layout = {"xaxis": _axis(cfg.get("xlabel") or str(x), range=[x_lo - x_pad, x_hi + x_pad]),
+              "yaxis": _axis(cfg.get("ylabel") or str(y), range=[y_lo - y_pad, y_hi + y_pad])}
     return _finish(data, layout, f"{y} vs {x}", notes, "scatter", stats=trend)
 
 
@@ -608,7 +637,7 @@ def _box(df: pd.DataFrame, cfg: dict[str, Any], schema: dict[str, Any]) -> dict[
         for name in order:
             sub = frame.loc[frame["x"] == name, "y"].to_numpy()
             sub = sub[_sample_indices(len(sub), MAX_BOX_POINTS)]
-            data.append(_box_trace(kind, _short(name), sub, x_label=_short(name), n=int((frame["x"] == name).sum())))
+            data.append(_box_trace(kind, _short(name), sub, x_label=_short(name), n=int((frame["x"] == name).sum()), color=_color(len(data))))
         try:
             from scipy import stats as sp
 
@@ -634,14 +663,15 @@ def _box(df: pd.DataFrame, cfg: dict[str, Any], schema: dict[str, Any]) -> dict[
     return _finish(data, layout, data_layout_title, notes, kind)
 
 
-def _box_trace(kind: str, name: str, values: np.ndarray, x_label: str, n: int) -> dict[str, Any]:
+def _box_trace(kind: str, name: str, values: np.ndarray, x_label: str, n: int, color: str | None = None) -> dict[str, Any]:
+    color = color or _color(0)
     trace: dict[str, Any] = {"type": kind, "y": values, "name": name, "showlegend": False,
-                             "marker": {"color": _color(0)}, "line": {"color": _color(0), "width": 1.5},
+                             "marker": {"color": color}, "line": {"color": color, "width": 2},
                              "hovertemplate": f"{name} (n = {n:,})<br>%{{y:,.4g}}<extra></extra>"}
     if kind == "box":
-        trace.update({"boxmean": True, "boxpoints": "outliers", "fillcolor": _color(0) + "33"})
+        trace.update({"boxmean": True, "boxpoints": "outliers", "fillcolor": color + "66"})
     else:
-        trace.update({"points": False, "meanline": {"visible": True}, "box": {"visible": True}, "fillcolor": _color(0) + "33", "spanmode": "hard"})
+        trace.update({"points": False, "meanline": {"visible": True}, "box": {"visible": True}, "fillcolor": color + "66", "spanmode": "hard"})
     return trace
 
 
@@ -710,7 +740,8 @@ def _missing(df: pd.DataFrame, cfg: dict[str, Any], schema: dict[str, Any]) -> d
         notes.append("Showing the 25 columns with the most missing values.")
     counts = df[pct.index].isna().sum()
     data = [{"type": "bar", "orientation": "h", "y": [_short(c, 30) for c in pct.index][::-1], "x": pct.values[::-1], "name": "% missing",
-             "marker": {"color": _color(0)}, "showlegend": False, "customdata": counts.values[::-1],
+             "marker": {"color": pct.values[::-1], "colorscale": VIVID, "cmin": 0, "cmax": 100, "showscale": False},
+             "showlegend": False, "customdata": counts.values[::-1],
              "hovertemplate": "%{y}: %{x:.1f}% missing (%{customdata:,} rows)<extra></extra>"}]
     layout = {"xaxis": _axis(cfg.get("xlabel") or "% of rows missing", range=[0, max(5, float(pct.max()) * 1.1)]),
               "yaxis": _axis(None, type="category"), "bargap": 0.3, "margin": {"l": 150}}
@@ -816,7 +847,7 @@ def _treemap(df: pd.DataFrame, cfg: dict[str, Any], schema: dict[str, Any]) -> d
             values.append(float(row["size"]))
             colors.append(float(row["color"]))
     data = [{"type": "treemap", "ids": ids, "labels": labels, "parents": parents, "values": values, "branchvalues": "total",
-             "marker": {"colors": colors, "colorscale": SEQUENTIAL, "line": {"color": "#0c1020", "width": 2},
+             "marker": {"colors": colors, "colorscale": VIVID, "line": {"color": "#0c1020", "width": 2},
                         "colorbar": {"title": {"text": _measure_label(y, agg) if y_values is not None else "Rows", "font": {"color": INK_MUTED}}, "tickfont": {"color": INK_MUTED}, "thickness": 12}},
              "textfont": {"color": INK}, "hovertemplate": "%{label}<br>%{value:,.4g}<extra></extra>", "tiling": {"pad": 3}}]
     layout = {"margin": {"t": 44, "r": 10, "l": 10, "b": 10}}
@@ -863,7 +894,7 @@ def _map(df: pd.DataFrame, cfg: dict[str, Any], schema: dict[str, Any]) -> dict[
         if time and time.get("is_panel") and time.get("entity_column") == x and y_values is not None:
             notes.append(f"Each region shows the {agg} of {y} across all {time['n_periods']} time periods; filter to one period with a dataset editor to compare a single year.")
         data = [{"type": "choropleth", "locations": table["loc"], "z": table["value"], "text": table["name"],
-                 "locationmode": "USA-states" if kind == "us_state" else "ISO-3", "colorscale": SEQUENTIAL,
+                 "locationmode": "USA-states" if kind == "us_state" else "ISO-3", "colorscale": VIVID,
                  "marker": {"line": {"color": "#0c1020", "width": 0.6}},
                  "colorbar": {"title": {"text": label, "font": {"color": INK_MUTED}}, "tickfont": {"color": INK_MUTED}, "thickness": 12, "len": 0.7},
                  "hovertemplate": "%{text}<br>" + label + ": %{z:,.4g}<extra></extra>"}]
@@ -883,7 +914,7 @@ def _map(df: pd.DataFrame, cfg: dict[str, Any], schema: dict[str, Any]) -> dict[
         shown = frame.iloc[idx]
         marker: dict[str, Any] = {"size": 7, "opacity": 0.75}
         if y_values is not None:
-            marker.update({"color": shown["y"], "colorscale": SEQUENTIAL, "showscale": True,
+            marker.update({"color": shown["y"], "colorscale": VIVID, "showscale": True,
                            "colorbar": {"title": {"text": str(y), "font": {"color": INK_MUTED}}, "tickfont": {"color": INK_MUTED}, "thickness": 12}})
         else:
             marker["color"] = _color(0)
