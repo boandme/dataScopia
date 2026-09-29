@@ -167,6 +167,72 @@ def test_license_endpoint_survives_kaggle_failure(client, monkeypatch):
     assert body["license"]["level"] == "unknown" and "could not be fetched" in body["license"]["summary"]
 
 
+def test_hf_search_without_query(client):
+    assert client.get("/datasets/hf/search").get_json() == {"results": []}
+
+
+def test_hf_search_delegates_to_provider(client, monkeypatch):
+    monkeypatch.setattr(main, "search_hf_datasets", lambda q, max_results=60: [{"id": "hf:org/name", "title": "org/name"}])
+    body = client.get("/datasets/hf/search?query=titanic").get_json()
+    assert body["results"] == [{"id": "hf:org/name", "title": "org/name"}]
+
+
+def test_hf_license_endpoint(client, monkeypatch):
+    monkeypatch.setattr(main, "get_hf_dataset_description", lambda ref: {"title": "T", "license": "mit", "url": "https://x"})
+    body = client.get("/datasets/hf/license?ref=org/name").get_json()
+    assert body["license"]["level"] == "open" and body["title"] == "T"
+    assert client.get("/datasets/hf/license?ref=bad").status_code == 400
+    # accepts either the bare ref or the "hf:" namespaced form the frontend stores it as
+    body2 = client.get("/datasets/hf/license?ref=hf:org/name").get_json()
+    assert body2["ref"] == "org/name"
+
+
+def _fake_hf_dataset(ref: str) -> dict:
+    import pandas as pd
+
+    df = pd.DataFrame({"country": ["France", "Germany", "Japan"], "value": [1, 2, 3]})
+    return {"path": None, "name": ref.replace("/", "-"), "file_type": "hf", "shape": {"rows": 3, "columns": 2},
+            "columns": list(df.columns), "dataframe": df,
+            "sample": {"file_name": f"{ref.replace('/', '-')}.parquet", "config": "default", "split": "train", "is_sample": False, "sample_rows": 3, "estimated_total_rows": 3, "total_bytes": None}}
+
+
+def test_hf_analyze_caches_under_namespaced_dataset_id(client, monkeypatch):
+    monkeypatch.setattr(main, "load_hf_dataset_sample", lambda ref, max_rows=2000: _fake_hf_dataset(ref))
+    monkeypatch.setattr(main, "get_hf_dataset_description", lambda ref: {"title": "Titanic", "license": "mit", "description": "d", "url": "https://x"})
+    response = client.post("/datasets/hf/analyze", json={"ref": "phihung/titanic"})
+    assert response.status_code == 200, response.get_data(as_text=True)
+    body = response.get_json()
+    assert body["dataset"]["dataset_id"] == "hf:phihung/titanic"
+    assert body["dataset"]["hf_info"]["title"] == "Titanic"
+    assert body["dataset"]["license_info"]["level"] == "open"
+    assert body["analysis"]["shape"] == {"rows": 3, "columns": 2}
+    # a Kaggle slug with the same "owner/name" shape must not collide with the hf: namespaced id
+    assert workspace_cache.get("phihung/titanic") is None
+    assert workspace_cache.get("hf:phihung/titanic") is not None
+
+
+def test_hf_analyze_requires_a_ref(client):
+    assert client.post("/datasets/hf/analyze", json={}).status_code == 400
+    assert client.post("/datasets/hf/analyze", json={"ref": "no-slash"}).status_code == 400
+
+
+def test_hf_analyze_reports_provider_errors_as_404(client, monkeypatch):
+    from dataset.huggingface import HFError
+
+    def boom(ref, max_rows=2000):
+        raise HFError(f"'{ref}' is private or gated.")
+    monkeypatch.setattr(main, "load_hf_dataset_sample", boom)
+    response = client.post("/datasets/hf/analyze", json={"ref": "org/gated-dataset"})
+    assert response.status_code == 404 and "gated" in response.get_json()["detail"]
+
+
+def test_hf_analyze_full_uses_namespaced_id_too(client, monkeypatch):
+    monkeypatch.setattr(main, "download_hf_dataset_full", lambda ref: _fake_hf_dataset(ref))
+    monkeypatch.setattr(main, "get_hf_dataset_description", lambda ref: {"title": "Titanic", "license": "", "description": "", "url": "https://x"})
+    body = client.post("/datasets/hf/analyze-full", json={"ref": "hf:phihung/titanic"}).get_json()
+    assert body["dataset"]["dataset_id"] == "hf:phihung/titanic"
+
+
 def test_frontend_is_a_multi_page_app_with_static_assets(client):
     html = client.get("/").get_data(as_text=True)
     for route in ("datasets", "overview", "visualization", "ask", "export", "changelog"):

@@ -11,6 +11,11 @@ from __future__ import annotations
 
 from typing import Any
 
+_NC_RULE: tuple[tuple[str, ...], str, str] = (("nc", "non-commercial", "noncommercial"), "restricted",
+                                                "Non-commercial: you may not use the data for commercial purposes.")
+_ND_RULE: tuple[tuple[str, ...], str, str] = (("nd", "no derivative", "noderiv"), "restricted",
+                                                "No derivatives: you may share the data as-is but not modify or adapt it.")
+
 _RULES: list[tuple[tuple[str, ...], str, str]] = [
     (("cc0", "public domain", "pddl", "cc-zero"), "open",
      "Public domain: you can copy, modify and use the data for any purpose, including commercial, without asking."),
@@ -18,12 +23,12 @@ _RULES: list[tuple[tuple[str, ...], str, str]] = [
      "Attribution required: reuse (including commercial) is allowed if you credit the source."),
     (("sa", "share alike", "sharealike", "odbl", "gpl", "share-alike"), "conditions",
      "Share-alike: reuse is allowed with credit, but anything you build from it must carry the same license."),
-    (("nc", "non-commercial", "noncommercial"), "restricted",
-     "Non-commercial: you may not use the data for commercial purposes."),
-    (("nd", "no derivative", "noderiv"), "restricted",
-     "No derivatives: you may share the data as-is but not modify or adapt it."),
+    _NC_RULE,
+    _ND_RULE,
     (("copyright", "all rights reserved", "proprietary", "other", "specified in description", "unknown"), "restricted",
      "Custom or restrictive terms: read the dataset's description or owner terms before using or sharing this data."),
+    (("mit", "apache", "apache 2", "bsd", "isc", "unlicense"), "open",
+     "Permissive open-source license: reuse, modification and commercial use are allowed with minimal conditions (typically just keeping the license notice)."),
 ]
 
 
@@ -35,9 +40,8 @@ def describe_license(name: str | None) -> dict[str, Any]:
                 "summary": "No license is recorded for this dataset. Without one you have no explicit permission to reuse or redistribute it."}
     lowered = f" {clean.lower().replace('-', ' ').replace('_', ' ')} "
     # Restrictions win over permissions: "CC BY-NC-SA" is non-commercial even though it says BY.
-    for rule_index, tokens in ((3, ("nc", "non commercial", "noncommercial")), (4, ("nd", "no derivative", "noderiv"))):
-        if any(f" {t} " in lowered for t in tokens):
-            level, summary = _RULES[rule_index][1:]
+    for tokens, level, summary in (_NC_RULE, _ND_RULE):
+        if any(f" {t.replace('-', ' ')} " in lowered for t in tokens):
             return {"name": clean, "level": level, "summary": summary}
     for keys, level, summary in _RULES:
         if any((f" {k} " in lowered) or (len(k) > 3 and k in lowered) for k in keys):

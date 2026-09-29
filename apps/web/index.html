@@ -44,6 +44,10 @@
         <div class="top-controls">
           <button class="btn secondary tour-icon" id="tour-btn" type="button" title="Quick tour" aria-label="Quick tour" hidden>?</button>
           <span class="dataset-pill" id="nav-dataset" hidden></span>
+          <button class="analysis-name-btn" id="analysis-name-btn" type="button" hidden title="Name this analysis (used as the default export title)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+            <span id="analysis-name-text">Name this analysis</span>
+          </button>
           <span class="save-status" id="save-status" hidden></span>
           <button class="btn secondary" id="save-analysis-btn" hidden>Save analysis</button>
           <button class="btn auth-btn-cta" id="auth-btn" type="button">
@@ -246,14 +250,20 @@
           </div>
           <div class="datasets-grid">
             <section class="panel" id="sidebar">
-              <h2>Find a Kaggle dataset</h2>
+              <div class="search-head">
+                <h2 id="search-heading">Find a Kaggle dataset</h2>
+                <div class="seg source-tabs" id="source-tabs" role="tablist">
+                  <button type="button" class="on" data-source="kaggle">Kaggle</button>
+                  <button type="button" data-source="huggingface">Hugging Face</button>
+                </div>
+              </div>
               <div class="search-box">
               <input id="search-input" placeholder="Search Kaggle datasets..." />
               <button class="btn" id="search-btn">Search</button>
             </div>
             <div id="results-count" class="results-count"></div>
             <div id="results" class="results"></div>
-              <div class="hint" style="margin-top: 8px;">Search results show each dataset's license. Only a bounded sample is streamed unless you run a full analysis.</div>
+              <div class="hint" style="margin-top: 8px;" id="search-hint">Search results show each dataset's license. Only a bounded sample is streamed unless you run a full analysis.</div>
             </section>
             <div class="datasets-side">
               <section class="panel">

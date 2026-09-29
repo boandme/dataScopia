@@ -1,5 +1,19 @@
 [
   {
+    "version": "v1.3",
+    "date": "2026-09-28",
+    "name": "Hugging Face as a Second Dataset Source",
+    "tag": "Data Sources",
+    "meta": "New import option",
+    "items": [
+      "The Datasets page now has a Kaggle / Hugging Face source toggle. Hugging Face search, licensing and analysis reuse the same results list, \"Analyze\" flow and license display as Kaggle - datasets are namespaced (hf:owner/name) so a same-named dataset on each site can never collide.",
+      "Sampling reads Hugging Face's Datasets Server directly as ready-to-use rows (no file-format sniffing or byte-range streaming needed, unlike Kaggle's arbitrary files), and \"Run full analysis\" reads the Parquet export Hugging Face already generates for every public dataset.",
+      "Notebook and PDF exports know about the new source too: the notebook's loading cell can re-download the full dataset straight from Hugging Face (just requests + pyarrow, no extra package), and both exports cite Hugging Face instead of mislabeling the source as Kaggle.",
+      "License recognition now also covers plain open-source licenses (MIT, Apache-2.0, BSD, ISC, Unlicense), common on Hugging Face but previously falling into a generic \"check the terms\" bucket.",
+      "Fixed the analysis-naming flow to not leak a previous analysis's remembered export title into a brand-new one, and added a \"Name this analysis\" control in the header so the name used for exports can be set (or changed) at any time, not just when saving."
+    ]
+  },
+  {
     "version": "v1.25",
     "date": "2026-09-27",
     "name": "Redesigned Sign-In, Deeper Exports & Scientific-Grade Charts",

@@ -972,6 +972,19 @@ const exportPrefs = loadExportPrefs();
 function saveExportPrefs() {
   try { localStorage.setItem(EXPORT_PREFS_KEY, JSON.stringify(exportPrefs)); } catch (error) { /* private browsing */ }
 }
+// exportPrefs[id].title/filename are remembered across sessions so repeat exports of the SAME
+// analysis don't ask twice - but that means they'd otherwise leak into the very next, unrelated
+// analysis too. Call this whenever a different analysis is loaded (a new dataset, a different
+// saved/cloud project) so each one starts from its own name again.
+function resetExportTitles() {
+  for (const id of ['notebook', 'pdf', 'quality']) {
+    if (!exportPrefs[id]) continue;
+    delete exportPrefs[id].title;
+    delete exportPrefs[id].filename;
+  }
+  saveExportPrefs();
+}
+window.resetExportTitles = resetExportTitles;
 
 function getPath(obj, path) { return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj); }
 function setPath(obj, path, value) {
@@ -1512,7 +1525,7 @@ function saveCurrentAnalysis(name) {
   const list = loadSavedAnalyses();
   list.unshift(buildAnalysisSnapshot(trimmedName));
   const ok = persistSavedAnalyses(list);
-  if (ok) state.projectName = trimmedName;
+  if (ok) { state.projectName = trimmedName; renderAnalysisNameChip(); }
   return ok ? {ok: true} : {ok: false, message: 'Could not save — your browser storage may be full or unavailable (e.g. private browsing).'};
 }
 
@@ -1529,6 +1542,7 @@ function restoreSavedAnalysis(id) {
   state.slug = item.slug || null;
   state.projectId = null;
   state.projectName = item.name || null;
+  resetExportTitles();
   state.findings = item.findings || [];
   // older saves stored just the description text; keep those readable (they can't be replayed)
   state.transformLog = (item.transformLog || []).map((entry) => (typeof entry === 'string' ? {description: entry} : entry));
@@ -1591,6 +1605,37 @@ async function analyzeSearchResult(slug) {
   await loadDatasetFromSlug(slug);
 }
 
+// Which catalogue the Datasets-page search box currently queries. The two sources share one
+// results list, one "Analyze" pipeline (loadDatasetFromSlug branches on the "hf:" id prefix) and
+// one license-display path (dataset.license_info) - only the search endpoint and result copy differ.
+const SEARCH_SOURCES = {
+  kaggle: {
+    label: 'Kaggle', heading: 'Find a Kaggle dataset', placeholder: 'Search Kaggle datasets...',
+    hint: "Search results show each dataset's license. Only a bounded sample is streamed unless you run a full analysis.",
+    searching: 'Searching Kaggle...', endpoint: '/datasets/search', licenseFallback: 'check on Kaggle', viewLabel: 'View on Kaggle',
+  },
+  huggingface: {
+    label: 'Hugging Face', heading: 'Find a Hugging Face dataset', placeholder: 'Search Hugging Face datasets...',
+    hint: "Every public dataset is streamed as ready-to-read rows - no download needed for a sample. Gated datasets need an HF_TOKEN configured on the server.",
+    searching: 'Searching Hugging Face...', endpoint: '/datasets/hf/search', licenseFallback: 'check on Hugging Face', viewLabel: 'View on Hugging Face',
+  },
+};
+let searchSource = 'kaggle';
+
+function setSearchSource(source) {
+  if (!SEARCH_SOURCES[source] || source === searchSource) return;
+  searchSource = source;
+  const copy = SEARCH_SOURCES[source];
+  document.getElementById('search-heading').textContent = copy.heading;
+  document.getElementById('search-hint').textContent = copy.hint;
+  searchInput.placeholder = copy.placeholder;
+  document.querySelectorAll('#source-tabs [data-source]').forEach((btn) => btn.classList.toggle('on', btn.dataset.source === source));
+  resultsCountEl.textContent = '';
+  resultsEl.innerHTML = '';
+  searchInput.focus();
+}
+document.querySelectorAll('#source-tabs [data-source]').forEach((btn) => btn.addEventListener('click', () => setSearchSource(btn.dataset.source)));
+
 function renderLicenseLine() {
   const el = document.getElementById('license-line');
   const info = state.dataset?.license_info;
@@ -1604,6 +1649,7 @@ function renderLicenseLine() {
 }
 
 async function searchDatasets() {
+  const copy = SEARCH_SOURCES[searchSource];
   const query = searchInput.value.trim();
   if (!query) {
     resultsCountEl.textContent = '';
@@ -1611,9 +1657,9 @@ async function searchDatasets() {
     return;
   }
   resultsCountEl.textContent = '';
-  resultsEl.innerHTML = '<div class="result-item">Searching Kaggle...</div>';
+  resultsEl.innerHTML = `<div class="result-item">${escapeHtml(copy.searching)}</div>`;
   try {
-    const response = await fetch(`${API_BASE}/datasets/search?query=${encodeURIComponent(query)}&limit=150`);
+    const response = await fetch(`${API_BASE}${copy.endpoint}?query=${encodeURIComponent(query)}&limit=150`);
     const data = await response.json();
     const results = data.results || [];
     if (!results.length) {
@@ -1627,9 +1673,9 @@ async function searchDatasets() {
         <div class="result-item">
           <strong>${escapeHtml(item.title || 'Dataset')}</strong>
           <div>${escapeHtml(item.subtitle || '')}</div>
-          <div style="margin-top: 8px; color: #9ca3af;">${escapeHtml(item.size || '')}${item.is_demo ? '' : `<span class="chip license-chip">License: ${escapeHtml(item.license || 'check on Kaggle')}</span>`}</div>
+          <div style="margin-top: 8px; color: #9ca3af;">${escapeHtml(item.size || '')}${item.is_demo ? '' : `<span class="chip license-chip">License: ${escapeHtml(item.license || copy.licenseFallback)}</span>`}${item.gated ? '<span class="chip gated-chip" title="Requires an HF_TOKEN with access to this dataset">Gated</span>' : ''}</div>
           <button class="btn secondary" style="margin-top: 10px;" data-analyze-slug="${escapeHtml(item.slug || item.id || 'demo')}">Analyze</button>
-          ${item.url ? `<a class="btn secondary" style="display: inline-block; margin: 10px 0 0 6px; text-decoration: none;" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">View on Kaggle</a>` : ''}
+          ${item.url ? `<a class="btn secondary" style="display: inline-block; margin: 10px 0 0 6px; text-decoration: none;" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(copy.viewLabel)}</a>` : ''}
         </div>
       `)
       .join('');
@@ -1638,7 +1684,7 @@ async function searchDatasets() {
     });
   } catch (error) {
     resultsCountEl.textContent = '';
-    resultsEl.innerHTML = '<div class="result-item">Search failed. Start the API server first.</div>';
+    resultsEl.innerHTML = `<div class="result-item">Search failed. Start the API server first.</div>`;
   }
 }
 
@@ -1665,6 +1711,7 @@ async function uploadDataset() {
     state.transformLog = [];
     state.projectId = null;
     state.projectName = null;
+    resetExportTitles();
     resetTransformBtn.hidden = true;
     downloadFullBtn.hidden = true;
     fullAnalysisBtn.hidden = true;
@@ -1679,28 +1726,36 @@ async function uploadDataset() {
   }
 }
 
-async function loadDatasetFromSlug(slug, endpoint = '/datasets/analyze') {
+// `id` is either a bare Kaggle slug ("owner/name") or a namespaced Hugging Face ref ("hf:owner/name") -
+// the same id shape returned by both /datasets/search and /datasets/hf/search, so one function and one
+// set of "Analyze" buttons in the results list works for either source without the caller needing to
+// know which one a given result came from.
+async function loadDatasetFromSlug(id, {full = false} = {}) {
+  const isHf = id.startsWith('hf:');
+  const endpoint = isHf ? (full ? '/datasets/hf/analyze-full' : '/datasets/hf/analyze') : (full ? '/datasets/analyze-full' : '/datasets/analyze');
+  const body = isHf ? {ref: id.slice(3)} : {slug: id};
   const response = await fetch(`${API_BASE}${endpoint}`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ slug }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
     const payload = await response.json();
-    resultsEl.innerHTML = `<div class="result-item"><strong>Dataset unavailable</strong><div>${payload.detail || 'Unable to load this dataset from Kaggle.'}</div><div style="margin-top: 8px; color: #9ca3af;">This search result may have been removed or may require Kaggle access.</div></div>`;
+    resultsEl.innerHTML = `<div class="result-item"><strong>Dataset unavailable</strong><div>${payload.detail || `Unable to load this dataset from ${isHf ? 'Hugging Face' : 'Kaggle'}.`}</div><div style="margin-top: 8px; color: #9ca3af;">This search result may have been removed${isHf ? ' or may be private/gated' : ' or may require Kaggle access'}.</div></div>`;
     return;
   }
 
   const json = await response.json();
   state.dataset = json.dataset;
   state.analysis = json.analysis;
-  state.slug = slug;
+  state.slug = isHf ? null : id;    // only a Kaggle slug feeds the "download full dataset" ZIP export
   state.transformLog = [];
   state.projectId = null;
   state.projectName = null;
+  resetExportTitles();
   resetTransformBtn.hidden = true;
-  downloadFullBtn.hidden = false;
+  downloadFullBtn.hidden = isHf;    // no ZIP download for Hugging Face sources yet - use "Run full analysis" instead
   fullAnalysisBtn.hidden = !(state.analysis?.sample?.is_sample);
   renderAnalysis();
   navigate('overview');
@@ -1716,6 +1771,7 @@ async function loadDemoData() {
   state.transformLog = [];
   state.projectId = null;
   state.projectName = null;
+  resetExportTitles();
   resetTransformBtn.hidden = true;
   downloadFullBtn.hidden = true;
   fullAnalysisBtn.hidden = true;
@@ -1724,6 +1780,26 @@ async function loadDemoData() {
   startOnboarding();
 }
 
+function renderAnalysisNameChip() {
+  const btn = document.getElementById('analysis-name-btn');
+  if (!btn) return;
+  btn.hidden = !state.analysis;
+  document.getElementById('analysis-name-text').textContent = state.projectName || 'Name this analysis';
+  btn.classList.toggle('is-named', Boolean(state.projectName));
+}
+window.renderAnalysisNameChip = renderAnalysisNameChip;
+
+document.getElementById('analysis-name-btn').addEventListener('click', () => {
+  if (!state.analysis) return;
+  const name = prompt('Name this analysis', state.projectName || state.analysis?.dataset_name || '');
+  if (name === null) return;                              // cancelled
+  const trimmed = name.trim();
+  state.projectName = trimmed || null;
+  resetExportTitles();                                     // an explicit rename should win over any remembered export title
+  renderAnalysisNameChip();
+  if (trimmed) window.renameOpenProject?.(trimmed);         // keep an already-open cloud project's name in sync
+});
+
 function renderAnalysis(options = {}) {
   const {rebuildCharts = true} = options;
   if (!state.analysis) return;
@@ -1731,6 +1807,7 @@ function renderAnalysis(options = {}) {
   const pill = document.getElementById('nav-dataset');
   pill.hidden = false;
   pill.textContent = state.analysis.dataset_name || 'dataset';
+  renderAnalysisNameChip();
   document.getElementById('site-nav').classList.add('has-data');
   document.getElementById('tour-btn').hidden = false;
 
@@ -1823,11 +1900,12 @@ window.addEventListener('resize', resizeAllCharts);
 document.getElementById('search-btn').addEventListener('click', searchDatasets);
 uploadBtn.addEventListener('click', uploadDataset);
 fullAnalysisBtn.addEventListener('click', async () => {
-  if (!state.slug) return;
+  const ref = state.dataset?.dataset_id;
+  if (!ref) return;
   fullAnalysisBtn.textContent = 'Running full analysis...';
   fullAnalysisBtn.disabled = true;
   try {
-    await loadDatasetFromSlug(state.slug, '/datasets/analyze-full');
+    await loadDatasetFromSlug(ref, {full: true});
   } finally {
     fullAnalysisBtn.textContent = 'Run full analysis';
     fullAnalysisBtn.disabled = false;

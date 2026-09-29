@@ -336,12 +336,22 @@ window.cloudSaveConfirm = function cloudSaveConfirm(name) {
   return true;
 };
 
+// Called by the header's "Name this analysis" control - keeps an already-saved cloud project's own
+// name in sync so the Projects list and this rename don't drift apart. No-op for unsaved analyses
+// (state.projectName alone still drives the export-title default in that case).
+window.renameOpenProject = async function renameOpenProject(name) {
+  if (!state.user || !state.projectId) return;
+  try { await api(`/api/projects/${state.projectId}`, {method: 'PUT', body: {name}}); }
+  catch (error) { toast(error.message, 'bad'); }
+};
+
 async function createProject(name) {
   setSaveStatus('Saving...', 'busy');
   try {
     const {project} = await api('/api/projects', {method: 'POST', body: {...projectPayload(), name: (name || '').trim()}});
     state.projectId = project.id;
     state.projectName = project.name;
+    window.renderAnalysisNameChip?.();
     setSaveStatus(`Saved ✓ ${new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`);
     toast(`Saved “${project.name}” to your account`);
   } catch (error) {
@@ -382,6 +392,7 @@ function applyWorkspacePayload(payload, {findings = [], chartConfigs = null, pro
   state.findings = findings;
   state.projectId = projectId;
   state.projectName = projectName;
+  window.resetExportTitles?.();
   state.qa = [];
   renderQaHistory();
   downloadFullBtn.hidden = !state.slug;
@@ -466,7 +477,7 @@ PAGE_HOOKS.projects = async function renderProjectsPage() {
         if (!name || !name.trim()) return;
         try {
           await api(`/api/projects/${id}`, {method: 'PUT', body: {name}});
-          if (state.projectId === id) state.projectName = name.trim();
+          if (state.projectId === id) { state.projectName = name.trim(); window.renderAnalysisNameChip?.(); }
           PAGE_HOOKS.projects();
         } catch (error) { toast(error.message, 'bad'); }
       });
@@ -475,7 +486,12 @@ PAGE_HOOKS.projects = async function renderProjectsPage() {
       });
       card.querySelector('[data-act=delete]').addEventListener('click', async () => {
         if (!confirm(`Delete “${project.name}”? This cannot be undone.`)) return;
-        try { await api(`/api/projects/${id}`, {method: 'DELETE'}); if (state.projectId === id) { state.projectId = null; state.projectName = null; } toast('Project deleted'); PAGE_HOOKS.projects(); } catch (error) { toast(error.message, 'bad'); }
+        try {
+          await api(`/api/projects/${id}`, {method: 'DELETE'});
+          if (state.projectId === id) { state.projectId = null; state.projectName = null; window.renderAnalysisNameChip?.(); }
+          toast('Project deleted');
+          PAGE_HOOKS.projects();
+        } catch (error) { toast(error.message, 'bad'); }
       });
     });
     body.querySelectorAll('[data-copy]').forEach((btn) => btn.addEventListener('click', () => copyLink(btn.dataset.copy)));

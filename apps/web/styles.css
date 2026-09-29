@@ -961,6 +961,7 @@
   .license-line { margin: 10px 0; padding: 8px 12px; border-radius: 10px; background: var(--panel-alt); font-size: 0.85rem; }
   .license-line p { margin: 4px 0 0; color: var(--muted); }
   .license-chip { margin-left: 8px; font-size: 0.7rem; }
+  .gated-chip { margin-left: 8px; font-size: 0.7rem; background: rgba(251, 191, 36, 0.14); color: #fcd34d; border-color: rgba(251, 191, 36, 0.4); }
   .chip.lic-open { background: rgba(52, 211, 153, 0.16); border-color: rgba(52, 211, 153, 0.4); }
   .chip.lic-conditions { background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.35); }
   .chip.lic-restricted { background: rgba(251, 191, 36, 0.14); border-color: rgba(251, 191, 36, 0.4); }
@@ -994,6 +995,16 @@
     padding: 6px 12px; border-radius: 999px; background: var(--panel-alt); color: var(--muted);
     font-size: 0.82rem; border: 1px solid rgba(148, 163, 184, 0.16); align-self: center;
   }
+  .analysis-name-btn {
+    display: inline-flex; align-items: center; gap: 6px; max-width: 200px;
+    padding: 6px 12px; border-radius: 999px; background: transparent; color: var(--muted);
+    font-size: 0.82rem; border: 1px dashed rgba(148, 163, 184, 0.35); align-self: center; cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  }
+  .analysis-name-btn svg { flex: none; }
+  .analysis-name-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .analysis-name-btn:hover { border-color: var(--accent); color: var(--text); background: rgba(56, 189, 248, 0.08); }
+  .analysis-name-btn.is-named { border-style: solid; background: var(--panel-alt); color: var(--text); }
   .top-controls { align-items: center; }
   #page-host { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
   .page { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
@@ -1253,6 +1264,10 @@
   .seg button.on { color: #051022; background: var(--brand-gradient); border-color: transparent; }
   .seg.swatches button i { width: 12px; height: 12px; border-radius: 50%; background: var(--sw); display: inline-block; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55); }
   .seg.swatches button.on { background: color-mix(in srgb, var(--sw) 35%, #10142a); color: #fff; border-color: var(--sw); }
+  .search-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  .search-head h2 { margin: 0; }
+  .source-tabs button { padding: 6px 13px; font-size: 0.8rem; }
+  @media (max-width: 560px) { .search-head { flex-direction: column; align-items: flex-start; } }
   @media (max-width: 520px) { .ef-grid, .ef-checks, .ef-group .ef-grid { grid-template-columns: 1fr; } }
   .ef.ef-toggle { flex-direction: row; align-items: center; }
   .ef.ef-toggle > span { padding: 0; }
@@ -1384,6 +1399,7 @@
   .site-nav a { padding: 0 11px; font-size: 1.02rem; gap: 6px; }
   .tour-icon { width: 36px; height: 36px; padding: 0 !important; border-radius: 50% !important; font-weight: 800; }
   .site-header .dataset-pill { max-width: 130px; font-size: 0.82rem; padding: 6px 11px; }
+  .site-header .analysis-name-btn { max-width: 120px; font-size: 0.8rem; padding: 6px 10px; }
   .site-header .top-controls .btn { padding: 9px 14px; font-size: 0.9rem; }
   .account-chip { max-width: 170px; }
   .auth-box h3, .join-box h3 { padding-right: 34px; }

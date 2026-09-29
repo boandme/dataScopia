@@ -166,14 +166,19 @@ def _wrap_blob(blob: str, width: int = 100) -> str:
 
 def _kaggle_slug(dataset: dict[str, Any]) -> str | None:
     dataset_id = str(dataset.get("dataset_id") or "")
-    if "/" in dataset_id and not dataset_id.startswith(("local-", "upload-")):
+    if "/" in dataset_id and not dataset_id.startswith(("local-", "upload-", "hf:")):
         return dataset_id
     return None
 
 
+def _hf_ref(dataset: dict[str, Any]) -> str | None:
+    dataset_id = str(dataset.get("dataset_id") or "")
+    return dataset_id[len("hf:"):] if dataset_id.startswith("hf:") else None
+
+
 # ----------------------------------------------------------------------------- sections
 
-def _intro(cells: _Cells, title: str, name: str, analysis: dict[str, Any], slug: str | None, opts: dict[str, Any] | None = None, fingerprint: str | None = None) -> None:
+def _intro(cells: _Cells, title: str, name: str, analysis: dict[str, Any], slug: str | None, opts: dict[str, Any] | None = None, fingerprint: str | None = None, hf_ref: str | None = None) -> None:
     snap = analysis.get("research_snapshot") or {}
     opts = opts or {}
     byline = ""
@@ -194,7 +199,9 @@ def _intro(cells: _Cells, title: str, name: str, analysis: dict[str, Any], slug:
         "relationships statistically and - when the data suggests a target - fits a baseline predictive model. "
         "Every number and chart below is computed by the code in its own cell, so you can change a cell and re-run it.\n\n"
         "**Requirements:** `pip install pandas numpy scipy scikit-learn plotly`"
-        + (" (plus `kagglehub` to download the full dataset)." if slug else ".")
+        + (" (plus `kagglehub` to download the full dataset)." if slug
+           else " (plus `requests` and `pyarrow`, usually already installed, to stream the full dataset from Hugging Face)." if hf_ref
+           else ".")
     )
     cells.code(
         "import gzip, base64, io, os\n"
@@ -213,11 +220,14 @@ def _intro(cells: _Cells, title: str, name: str, analysis: dict[str, Any], slug:
 
 
 def _source_and_license(cells: _Cells, name: str, dataset: dict[str, Any]) -> None:
-    info = dataset.get("kaggle_info") if isinstance(dataset.get("kaggle_info"), dict) else {}
     slug = _kaggle_slug(dataset)
+    hf_ref = _hf_ref(dataset)
+    info = dataset.get("kaggle_info") if isinstance(dataset.get("kaggle_info"), dict) else (dataset.get("hf_info") if isinstance(dataset.get("hf_info"), dict) else {})
     lines = ["## 1. Data source and license\n"]
     if slug:
         lines.append(f"- **Source:** Kaggle dataset [`{slug}`](https://www.kaggle.com/datasets/{slug})")
+    elif hf_ref:
+        lines.append(f"- **Source:** Hugging Face dataset [`{hf_ref}`](https://huggingface.co/datasets/{hf_ref})")
     elif dataset.get("dataset_id", "").startswith("upload-") if isinstance(dataset.get("dataset_id"), str) else False:
         lines.append(f"- **Source:** a file uploaded by the analyst (`{name}`)")
     else:
@@ -238,6 +248,7 @@ def _loading(cells: _Cells, original: pd.DataFrame, dataset: dict[str, Any], ana
     sample = dataset.get("sample") or analysis.get("sample") or {}
     file_name = str(sample.get("file_name") or dataset.get("file_name") or f"{name}.{dataset.get('file_type') or 'csv'}")
     slug = _kaggle_slug(dataset)
+    hf_ref = _hf_ref(dataset)
     blob, embedded_rows, truncated = _embed_snapshot(original, embed_rows)
     total_rows = len(original)
     is_partial = bool(sample.get("is_sample"))
@@ -251,10 +262,16 @@ def _loading(cells: _Cells, original: pd.DataFrame, dataset: dict[str, Any], ana
         note.append(f"2. **Kaggle** - set `USE_KAGGLE = True` to download `{slug}` with `kagglehub` (needs Kaggle credentials).")
         if embedded_rows:
             note.append(f"3. **The embedded snapshot** - {embedded_rows:,} rows saved inside this notebook, so it always runs.")
+    elif hf_ref:
+        note.append(f"2. **Hugging Face** - set `USE_HF = True` to stream the full `{hf_ref}` dataset (`{sample.get('config', 'default')}`/`{sample.get('split', 'train')}`) "
+                     "from Hugging Face's Datasets Server - just `requests` and `pyarrow`, no extra package or token needed for public datasets.")
+        if embedded_rows:
+            note.append(f"3. **The embedded snapshot** - {embedded_rows:,} rows saved inside this notebook, so it always runs.")
     elif embedded_rows:
         note.append(f"2. **The embedded snapshot** - {embedded_rows:,} rows saved inside this notebook, so it always runs.")
     if not embedded_rows:
-        note.append("\n> **No data is embedded in this notebook** (chosen at export time to keep it small and private), so the local file or Kaggle download is required.")
+        note.append(f"\n> **No data is embedded in this notebook** (chosen at export time to keep it small and private), so the local file"
+                     f"{' or Kaggle download' if slug else ' or Hugging Face download' if hf_ref else ''} is required.")
     if truncated or is_partial:
         why = []
         if is_partial:
@@ -262,15 +279,20 @@ def _loading(cells: _Cells, original: pd.DataFrame, dataset: dict[str, Any], ana
         if truncated:
             why.append(f"only the first {embedded_rows:,} of {total_rows:,} rows fit in the notebook")
         note.append(f"\n> **Heads up:** {' and '.join(why)}. Results from the snapshot describe that sample; "
-                    "use the local file or Kaggle download for the complete data.")
+                    f"use the local file{' or Kaggle download' if slug else ' or Hugging Face download' if hf_ref else ''} for the complete data.")
     cells.md("\n".join(note))
 
     if embedded_rows:
         cells.code("# Embedded snapshot of the original rows (gzip-compressed CSV, base64-encoded). Safe to skip over.\n" + _wrap_blob(blob))
 
-    kaggle_block = ""
+    # Kaggle's download step only has to update DATA_FILE to point at the freshly downloaded local
+    # copy, so it can run unconditionally before the plain "does this file exist" check below and
+    # let that check pick it up - no separate branch needed. Hugging Face has no local-file step at
+    # all (the data is read straight into a dataframe from a remote URL), so it needs its own
+    # dedicated branch ahead of the local-file check instead.
+    source_setup, hf_branch, check_prefix = "", "", "if"
     if slug:
-        kaggle_block = (
+        source_setup = (
             f"USE_KAGGLE = False          # set True to download the full dataset from Kaggle\n"
             f"KAGGLE_SLUG = {slug!r}\n"
             "if USE_KAGGLE:\n"
@@ -278,18 +300,33 @@ def _loading(cells: _Cells, original: pd.DataFrame, dataset: dict[str, Any], ana
             "    DATA_FILE = os.path.join(kagglehub.dataset_download(KAGGLE_SLUG), os.path.basename(DATA_FILE))\n"
             "\n"
         )
+    elif hf_ref:
+        source_setup = (
+            f"USE_HF = False              # set True to stream the full dataset from Hugging Face\n"
+            f"HF_REF = {hf_ref!r}\n"
+            f"HF_CONFIG, HF_SPLIT = {sample.get('config', 'default')!r}, {sample.get('split', 'train')!r}\n"
+        )
+        hf_branch = (
+            "if USE_HF:\n"
+            "    import requests\n"
+            "    _files = requests.get('https://datasets-server.huggingface.co/parquet', params={'dataset': HF_REF}).json()['parquet_files']\n"
+            "    _files = [f for f in _files if f['config'] == HF_CONFIG and f['split'] == HF_SPLIT] or _files\n"
+            "    df_raw = pd.concat([pd.read_parquet(f['url']) for f in _files], ignore_index=True)\n"
+            "    print(f'Downloaded {HF_REF} from Hugging Face ({len(df_raw):,} rows)')\n"
+        )
+        check_prefix = "elif"
     cells.code(
         f"DATA_FILE = {file_name!r}\n"
-        f"{kaggle_block}"
-        "if os.path.exists(DATA_FILE):\n"
+        f"{source_setup}"
+        f"{hf_branch}"
+        f"{check_prefix} os.path.exists(DATA_FILE):\n"
         f"    df_raw = {_read_call(file_name)}\n"
         "    print(f'Loaded {DATA_FILE}')\n"
         "else:\n"
         + ("    df_raw = pd.read_csv(io.BytesIO(gzip.decompress(base64.b64decode(''.join(_SNAPSHOT_GZ_B64)))), low_memory=False)\n"
            "    print('Local file not found - using the snapshot embedded in this notebook.')\n" if embedded_rows else
            "    raise FileNotFoundError(f'{DATA_FILE} not found. Place the data file next to this notebook (no snapshot is embedded).')\n")
-        + ""
-        "\n"
+        + "\n"
         "df = df_raw.copy()   # 'df' is the working copy; df_raw stays untouched for comparison\n"
         "print(f'{df.shape[0]:,} rows x {df.shape[1]} columns')\n"
         "df.head()"
@@ -894,7 +931,7 @@ def build_notebook(
     slug = _kaggle_slug(dataset)
     opt = normalize_options(options)
     on = opt["sections"]
-    _intro(cells, title, name, analysis, slug, opt, fingerprint=(deep_ctx or {}).get("fingerprint"))
+    _intro(cells, title, name, analysis, slug, opt, fingerprint=(deep_ctx or {}).get("fingerprint"), hf_ref=_hf_ref(dataset))
     _source_and_license(cells, name, dataset)
     if preview_only:
         cells.md("> **Note:** the server no longer holds this dataset's data (the session expired), so this notebook embeds only the "

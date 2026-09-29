@@ -42,6 +42,14 @@ from dataset.kaggle_search import (
     kaggle_credential_status,
     search_kaggle_datasets,
 )
+from dataset.huggingface import (
+    HFError,
+    download_hf_dataset_full,
+    get_hf_dataset_description,
+    hf_credential_status,
+    load_hf_dataset_sample,
+    search_hf_datasets,
+)
 from dataset.license import describe_license
 from dataset.descriptions import extract_column_descriptions, infer_column_description
 from dataset.loader import load_dataset, load_dataframe_from_bytes
@@ -114,6 +122,19 @@ def _attach_kaggle_description(dataset: dict[str, object], df: pd.DataFrame, slu
     dataset["license_info"] = describe_license(info.get("license"))
     documented = extract_column_descriptions(info.get("description", ""), list(df.columns))
     _attach_column_descriptions(dataset, df, documented)
+
+
+def _attach_hf_description(dataset: dict[str, object], df: pd.DataFrame, ref: str) -> None:
+    """Hugging Face analogue of ``_attach_kaggle_description``: dataset-card title/license/
+    description, plus name-based column descriptions (Hugging Face's API doesn't expose
+    per-column documentation any more reliably than Kaggle's does)."""
+    try:
+        info = get_hf_dataset_description(ref)
+    except Exception:
+        info = {}
+    dataset["hf_info"] = info
+    dataset["license_info"] = describe_license(info.get("license"))
+    _attach_column_descriptions(dataset, df)
 
 
 def _cache_dataset(dataset: dict[str, object], df: pd.DataFrame, dataset_id: str) -> None:
@@ -254,6 +275,94 @@ def analyze_dataset_full():
         detail = str(exc)
         status_code = 404 if "Resource not found" in detail or "404" in detail else 500
         raise ApiError(status_code, detail) from exc
+
+
+# ------------------------------------------------------------------ Hugging Face (a second dataset source)
+#
+# Namespaced dataset_id: every Hugging Face dataset is cached and referenced as "hf:owner/name" -
+# never the bare ref - because a Kaggle slug has the identical "owner/name" shape, and without the
+# prefix a same-named dataset on each site could silently overwrite the other's cache entry.
+
+@app.get("/auth/huggingface")
+def hf_auth_status():
+    return jsonify(hf_credential_status())
+
+
+@app.get("/datasets/hf/search")
+def search_hf_datasets_route():
+    query = request.args.get("query", "")
+    limit = request.args.get("limit", 60, type=int) or 60
+    if not query:
+        return jsonify({"results": []})
+    return jsonify({"results": search_hf_datasets(query, max_results=max(1, min(limit, 100)))})
+
+
+def _hf_ref_from_request(payload: dict[str, object]) -> str:
+    ref = str(payload.get("ref") or payload.get("dataset_ref") or "").strip()
+    ref = ref[len("hf:"):] if ref.startswith("hf:") else ref
+    if not ref or "/" not in ref:
+        raise ApiError(400, "A Hugging Face dataset ref (owner/name) is required.")
+    return ref
+
+
+@app.get("/datasets/hf/license")
+def hf_dataset_license():
+    """The license of a Hugging Face dataset in plain language - the HF analogue of
+    /datasets/license, shown before any data is fetched."""
+    ref = (request.args.get("ref") or "").strip()
+    ref = ref[len("hf:"):] if ref.startswith("hf:") else ref
+    if "/" not in ref:
+        raise ApiError(400, "A Hugging Face dataset ref (owner/name) is required.")
+    info = get_hf_dataset_description(ref)
+    license_info = describe_license(info.get("license"))
+    return jsonify({"ref": ref, "title": info.get("title", ref), "url": info.get("url") or f"https://huggingface.co/datasets/{ref}", "license": license_info})
+
+
+@app.post("/datasets/hf/analyze")
+def analyze_hf_dataset():
+    """Profile a Hugging Face dataset from a bounded row sample via the Datasets Server - see
+    dataset.huggingface for why this needs no file-format sniffing or byte streaming, unlike the
+    Kaggle path."""
+    payload = _json_body()
+    ref = _hf_ref_from_request(payload)
+    max_rows = int(payload.get("max_rows") or 2000)
+    dataset_id = f"hf:{ref}"
+
+    try:
+        dataset = load_hf_dataset_sample(ref, max_rows=max_rows)
+        df = dataset["dataframe"]
+        _cache_dataset(dataset, df, dataset_id=dataset_id)
+        _attach_hf_description(dataset, df, ref)
+        graph_mod.index_dataset(dataset_id, (dataset.get("hf_info") or {}).get("title") or ref, (dataset.get("hf_info") or {}).get("license"), df, source="huggingface")
+        analysis = _analysis_with_preview(df, dataset["name"], sample_info=dataset.get("sample"))
+        return jsonify({"dataset": _serializable_dataset(dataset), "analysis": analysis})
+    except HFError as exc:
+        raise ApiError(404, str(exc)) from exc
+    except Exception as exc:  # pragma: no cover
+        raise ApiError(500, str(exc)) from exc
+
+
+@app.post("/datasets/hf/analyze-full")
+def analyze_hf_dataset_full():
+    """A full (not sample-bounded) read of a Hugging Face dataset, via the Parquet files Hugging
+    Face already converted it to - no temporary download workspace needed, unlike Kaggle's
+    arbitrary-file-format case."""
+    payload = _json_body()
+    ref = _hf_ref_from_request(payload)
+    dataset_id = f"hf:{ref}"
+
+    try:
+        dataset = download_hf_dataset_full(ref)
+        df = dataset["dataframe"]
+        _cache_dataset(dataset, df, dataset_id=dataset_id)
+        _attach_hf_description(dataset, df, ref)
+        graph_mod.index_dataset(dataset_id, (dataset.get("hf_info") or {}).get("title") or ref, (dataset.get("hf_info") or {}).get("license"), df, source="huggingface")
+        analysis = _analysis_with_preview(df, dataset["name"], sample_info=dataset.get("sample"))
+        return jsonify({"dataset": _serializable_dataset(dataset), "analysis": analysis})
+    except HFError as exc:
+        raise ApiError(404, str(exc)) from exc
+    except Exception as exc:  # pragma: no cover
+        raise ApiError(500, str(exc)) from exc
 
 
 @app.post("/datasets/download-file")

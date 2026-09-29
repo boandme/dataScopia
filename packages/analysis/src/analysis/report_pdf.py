@@ -239,6 +239,8 @@ def build_report_pdf(
     dataset_info = dataset_info or {}
     transform_log = [t for t in (transform_log or []) if isinstance(t, dict) and t.get("description")]
     kaggle_info = dataset_info.get("kaggle_info") if isinstance(dataset_info.get("kaggle_info"), dict) else {}
+    hf_info = dataset_info.get("hf_info") if isinstance(dataset_info.get("hf_info"), dict) else {}
+    source_info = kaggle_info or hf_info  # whichever provider this dataset actually came from
     license_info = dataset_info.get("license_info") if isinstance(dataset_info.get("license_info"), dict) else {}
     sample = analysis.get("sample") or dataset_info.get("sample") or {}
 
@@ -366,9 +368,11 @@ def build_report_pdf(
         return P(text, h2)
 
     # ---------------------------------------------------------------- derived facts
-    slug = dataset_info.get("slug") or (dataset_info.get("dataset_id") if "/" in str(dataset_info.get("dataset_id", "")) and not str(dataset_info.get("dataset_id", "")).startswith(("local-", "upload-")) else None)
-    display_title = opt["title"] or (kaggle_info.get("title") or dataset_name).strip()
-    data_title = (kaggle_info.get("title") or dataset_name).strip()
+    _dataset_id = str(dataset_info.get("dataset_id", ""))
+    hf_ref = _dataset_id[len("hf:"):] if _dataset_id.startswith("hf:") else None
+    slug = None if hf_ref else (dataset_info.get("slug") or (_dataset_id if "/" in _dataset_id and not _dataset_id.startswith(("local-", "upload-", "hf:")) else None))
+    display_title = opt["title"] or (source_info.get("title") or dataset_name).strip()
+    data_title = (source_info.get("title") or dataset_name).strip()
     n_measures = sum(1 for c in df.columns if profiles[c]["role"] == "numeric")
     n_groupers = sum(1 for c in df.columns if profiles[c]["role"] in {"categorical", "binary", "ordinal", "geo_country", "geo_state"})
     top_corr = corr["pairs"][0] if corr["pairs"] else None
@@ -379,7 +383,7 @@ def build_report_pdf(
     missing_total = snapshot["missing_percentage"]
     is_sample = bool(sample and sample.get("is_sample"))
     total_tests = corr["tests"] + groups["tests"] + tassoc.get("tests", 0) + len(trends_deep or ([trend] if trend else []))
-    lic = license_info.get("name") or kaggle_info.get("license")
+    lic = license_info.get("name") or source_info.get("license")
     strongest = dc["strongest"]
 
     def corr_sentence(row: dict[str, Any]) -> str:
@@ -395,7 +399,8 @@ def build_report_pdf(
     band.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(band_hex)), ("LEFTPADDING", (0, 0), (-1, -1), 16), ("RIGHTPADDING", (0, 0), (-1, -1), 16),
                               ("TOPPADDING", (0, 0), (0, 0), 14), ("BOTTOMPADDING", (0, -1), (-1, -1), 14), ("TOPPADDING", (0, 1), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -2), 2)]))
     story += [band, Spacer(1, 8)]
-    source_line = f"Source: Kaggle dataset {slug}" if slug else f"Source: {dataset_info.get('file_type', 'user-supplied')} file \"{dataset_name}\""
+    source_line = (f"Source: Kaggle dataset {slug}" if slug else f"Source: Hugging Face dataset {hf_ref}" if hf_ref
+                   else f"Source: {dataset_info.get('file_type', 'user-supplied')} file \"{dataset_name}\"")
     story.append(P("  |  ".join(esc(b) for b in [source_line] + ([f"License: {lic}"] if lic else []) + [f"Data fingerprint: {S['fingerprint']}"]), small))
 
     score_color = "#16a34a" if quality["score"] >= 85 else "#d97706" if quality["score"] >= 65 else "#dc2626"
@@ -528,7 +533,9 @@ def build_report_pdf(
     if sec_on["methods"]:
         story.append(H1("methods", "Data and Methods"))
         story.append(H2("Data source and preparation"))
-        src = (f"The data were obtained from the Kaggle dataset {esc(slug)} (https://www.kaggle.com/datasets/{esc(slug)})" if slug else f"The data were supplied as the {esc(dataset_info.get('file_type', 'tabular'))} file \"{esc(dataset_name)}\"")
+        src = (f"The data were obtained from the Kaggle dataset {esc(slug)} (https://www.kaggle.com/datasets/{esc(slug)})" if slug
+               else f"The data were obtained from the Hugging Face dataset {esc(hf_ref)} (https://huggingface.co/datasets/{esc(hf_ref)})" if hf_ref
+               else f"The data were supplied as the {esc(dataset_info.get('file_type', 'tabular'))} file \"{esc(dataset_name)}\"")
         src += (f", released under the {esc(lic)} license ({LICENSE_LEVEL_TEXT.get(license_info.get('level', ''), 'terms should be checked before reuse')})." if lic else ". No license information was recorded, so terms of reuse should be checked with the owner.")
         if is_sample:
             src += f" Only a partial sample of the file was analysed ({rows_n:,} rows" + (f" of an estimated {sample['estimated_total_rows']:,}" if sample.get("estimated_total_rows") else "") + ")."
@@ -912,6 +919,8 @@ def build_report_pdf(
         refs: list[str] = []
         if slug:
             refs.append(f"Kaggle (n.d.) {esc(display_title if not opt['title'] else data_title)}. https://www.kaggle.com/datasets/{esc(slug)}" + (f". License: {esc(lic)}." if lic else "."))
+        elif hf_ref:
+            refs.append(f"Hugging Face (n.d.) {esc(display_title if not opt['title'] else data_title)}. https://huggingface.co/datasets/{esc(hf_ref)}" + (f". License: {esc(lic)}." if lic else "."))
         refs += [
             "Breiman, L. (2001) Random forests. <i>Machine Learning</i> 45: 5-32.",
             "Cohen, J. (1988) <i>Statistical Power Analysis for the Behavioral Sciences</i>, 2nd edn. Lawrence Erlbaum, Hillsdale, NJ.",
