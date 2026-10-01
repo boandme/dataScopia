@@ -58,7 +58,7 @@ _attempts_lock = threading.Lock()
 
 def public_user(row: Any) -> dict[str, Any]:
     return {"id": row["id"], "email": "" if row["email"].endswith("@users.firebase.local") else row["email"], "display_name": row["display_name"], "created_at": row["created_at"],
-            "managed_by": "firebase" if row["firebase_uid"] else "local"}
+            "managed_by": "firebase" if row["firebase_uid"] else "local", "photo_url": row["photo_url"] if "photo_url" in row.keys() else ""}
 
 
 def current_user() -> Any | None:

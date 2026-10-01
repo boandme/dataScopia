@@ -89,6 +89,21 @@ async function refreshUser() {
   renderAuthUI();
 }
 
+// Google (and any other provider that sends one) supplies a real profile photo; shown in place of
+// the initials when present, falling back to initials automatically if the image fails to load
+// (an expired/CORS-blocked Google photo URL shouldn't leave the avatar blank).
+function setAvatar(el, photoUrl, initial) {
+  if (!photoUrl) { el.textContent = initial; return; }
+  el.textContent = '';
+  const img = document.createElement('img');
+  img.src = photoUrl;
+  img.alt = '';
+  img.referrerPolicy = 'no-referrer';
+  img.style.cssText = 'width:100%;height:100%;border-radius:50%;object-fit:cover;';
+  img.onerror = () => { el.textContent = initial; };
+  el.appendChild(img);
+}
+
 function renderAuthUI() {
   const user = state.user;
   $('auth-btn').hidden = Boolean(user);
@@ -96,8 +111,8 @@ function renderAuthUI() {
   if (user) {
     const initial = (user.display_name || '?').trim().charAt(0).toUpperCase();
     $('account-name').textContent = user.display_name;
-    $('account-avatar').textContent = initial;
-    $('account-dd-avatar').textContent = initial;
+    setAvatar($('account-avatar'), user.photo_url, initial);
+    setAvatar($('account-dd-avatar'), user.photo_url, initial);
     $('account-dd-name').textContent = user.display_name;
     $('account-dd-email').textContent = user.email;
   }
@@ -392,6 +407,7 @@ function applyWorkspacePayload(payload, {findings = [], chartConfigs = null, pro
   state.findings = findings;
   state.projectId = projectId;
   state.projectName = projectName;
+  state.comparisonDatasets = [];
   window.resetExportTitles?.();
   state.qa = [];
   renderQaHistory();

@@ -28,7 +28,6 @@ import pandas as pd
 from flask import Flask, Response, jsonify, request, send_file
 from flask_cors import CORS
 
-from analysis.profiler import analyze_dataframe
 from analysis.notebook_export import build_notebook
 from analysis.qa_engine import answer_question
 from analysis.report_pdf import build_report_pdf
@@ -67,6 +66,19 @@ WEB_DIR = PROJECT_ROOT / "apps" / "web"
 # The frontend is plain static files (index.html + styles.css + app.js) served from the same origin.
 app = Flask(os.getenv("APP_TITLE", "DataScopia"), static_folder=str(WEB_DIR), static_url_path="/assets")
 CORS(app)
+
+
+@app.after_request
+def _allow_auth_popups(response):
+    # Firebase's signInWithPopup (Google, etc.) opens a popup on another origin and polls
+    # window.closed on it to notice a cancelled sign-in. Chrome's default Cross-Origin-Opener-Policy
+    # severs that reference between cross-origin windows, which doesn't break the sign-in itself
+    # (Firebase also listens via postMessage) but throws a console error on every attempt and can
+    # make a genuinely cancelled popup go undetected. "same-origin-allow-popups" keeps this page
+    # isolated from unrelated cross-origin pages while explicitly keeping the reference to popups
+    # *this page itself* opened - exactly what a same-origin popup-based OAuth flow needs.
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
+    return response
 
 # How much of a dataset file to stream for sample-based analysis before analysis falls back to
 # asking the user to run a full analysis or full download. Configurable since it trades off
@@ -675,7 +687,7 @@ def demo_dataset():
     return jsonify(
         {
             "dataset": dataset,
-            "analysis": analyze_dataframe(df, dataset_name="demo_dataset"),
+            "analysis": _analysis_with_preview(df, "demo_dataset"),
         }
     )
 

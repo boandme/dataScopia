@@ -145,6 +145,10 @@ def test_report_pdf(client):
 def test_demo_dataset(client):
     body = client.get("/datasets/demo").get_json()
     assert body["dataset"]["dataset_id"] == "demo"
+    # the "preview" key is what the frontend reads to know which columns exist and build chart
+    # slots (fields = Object.keys(analysis.preview[0])) - without it "Load demo data" shows the
+    # Visualization page as if no dataset were loaded at all, even though analysis itself is fine.
+    assert body["analysis"]["preview"] and len(body["analysis"]["preview"]) == body["analysis"]["shape"]["rows"]
     assert workspace_cache.get("demo") is not None
 
 

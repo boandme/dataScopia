@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS users (
   display_name TEXT NOT NULL,
   pw_hash TEXT NOT NULL DEFAULT '',
   firebase_uid TEXT UNIQUE,
+  photo_url TEXT NOT NULL DEFAULT '',
   created_at REAL NOT NULL,
   last_login REAL
 );
@@ -112,6 +113,8 @@ def configure(db_path: str | os.PathLike[str] | None = None, data_dir: str | os.
             if "firebase_uid" not in cols:  # databases created before Firebase support
                 conn.execute("ALTER TABLE users ADD COLUMN firebase_uid TEXT")
                 conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_firebase ON users(firebase_uid)")
+            if "photo_url" not in cols:  # databases created before Google-photo support
+                conn.execute("ALTER TABLE users ADD COLUMN photo_url TEXT NOT NULL DEFAULT ''")
         if docs is not None or blobs is not None:
             CONFIG["docs"], CONFIG["blobs"], CONFIG["backend"] = docs, blobs, "injected"
         elif data_backend() == "firebase":
@@ -191,21 +194,22 @@ def upsert_firebase_user(claims: dict[str, Any], display_name: str = "") -> Any:
     """Create or refresh the local record for a Firebase user (sessions and ownership hang off it)."""
     email = claims["email"] or f"{claims['uid']}@users.firebase.local"
     name = (display_name or claims.get("name") or email.split("@")[0]).strip()[:60]
+    photo = str(claims.get("picture") or "")[:500]  # from Google (and any other provider that sends one); refreshed on every sign-in
     with db() as conn:
         row = conn.execute("SELECT * FROM users WHERE firebase_uid = ?", (claims["uid"],)).fetchone()
         if row:
-            conn.execute("UPDATE users SET email = ?, display_name = CASE WHEN ? != '' THEN ? ELSE display_name END, last_login = ? WHERE id = ?",
-                         (email, display_name.strip()[:60], name, now(), row["id"]))
+            conn.execute("UPDATE users SET email = ?, display_name = CASE WHEN ? != '' THEN ? ELSE display_name END, photo_url = ?, last_login = ? WHERE id = ?",
+                         (email, display_name.strip()[:60], name, photo, now(), row["id"]))
         else:
             # a built-in account with the same email is linked rather than duplicated
             existing = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
             if existing and not existing["firebase_uid"]:
-                conn.execute("UPDATE users SET firebase_uid = ?, last_login = ? WHERE id = ?", (claims["uid"], now(), existing["id"]))
+                conn.execute("UPDATE users SET firebase_uid = ?, photo_url = ?, last_login = ? WHERE id = ?", (claims["uid"], photo, now(), existing["id"]))
             elif existing:
                 email = f"{claims['uid']}@users.firebase.local"
-                conn.execute("INSERT INTO users(email, display_name, pw_hash, firebase_uid, created_at, last_login) VALUES (?,?,?,?,?,?)", (email, name, "", claims["uid"], now(), now()))
+                conn.execute("INSERT INTO users(email, display_name, pw_hash, firebase_uid, photo_url, created_at, last_login) VALUES (?,?,?,?,?,?,?)", (email, name, "", claims["uid"], photo, now(), now()))
             else:
-                conn.execute("INSERT INTO users(email, display_name, pw_hash, firebase_uid, created_at, last_login) VALUES (?,?,?,?,?,?)", (email, name, "", claims["uid"], now(), now()))
+                conn.execute("INSERT INTO users(email, display_name, pw_hash, firebase_uid, photo_url, created_at, last_login) VALUES (?,?,?,?,?,?,?)", (email, name, "", claims["uid"], photo, now(), now()))
         return conn.execute("SELECT * FROM users WHERE firebase_uid = ?", (claims["uid"],)).fetchone()
 
 

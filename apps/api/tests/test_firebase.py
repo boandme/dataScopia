@@ -236,6 +236,23 @@ def test_id_token_is_exchanged_for_a_session(client, firebase_auth):
     assert again["id"] == user["id"] and again["display_name"] == "Rear Admiral Hopper"  # same account, refreshed name
 
 
+def test_google_sign_in_captures_and_refreshes_the_profile_photo(client, monkeypatch):
+    accounts.set_mode("firebase")
+    photo = "https://lh3.googleusercontent.com/a/one.jpg"
+    claims = {"user_id": "uid-google-1", "email": "ada@example.com", "email_verified": True, "name": "Ada Lovelace",
+              "picture": photo, "auth_time": time.time(), "firebase": {"sign_in_provider": "google.com"}}
+    monkeypatch.setattr(firebase, "_verify_raw", lambda token, audience: dict(claims))
+
+    user = client.post("/api/auth/firebase", json={"id_token": "t"}).get_json()["user"]
+    assert user["photo_url"] == photo
+    assert client.get("/api/auth/me").get_json()["user"]["photo_url"] == photo
+
+    # Google can rotate the photo URL on a later sign-in; the stored one should follow it.
+    claims["picture"] = "https://lh3.googleusercontent.com/a/two.jpg"
+    again = client.post("/api/auth/firebase", json={"id_token": "t"}).get_json()["user"]
+    assert again["id"] == user["id"] and again["photo_url"] == "https://lh3.googleusercontent.com/a/two.jpg"
+
+
 def test_invalid_or_missing_tokens_are_rejected(client, firebase_auth):
     assert client.post("/api/auth/firebase", json={"id_token": "bad"}).status_code == 401
     assert client.post("/api/auth/firebase", json={}).status_code == 401

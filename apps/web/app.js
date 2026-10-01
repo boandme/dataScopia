@@ -13,6 +13,7 @@ const state = {
   findings: [],
   transformLog: [],          // [{type, params, description}] - replayed by the notebook export
   projectName: null,         // whatever the user last named this analysis - export titles default to it
+  comparisonDatasets: [],    // [{dataset_id, name, fields, source}] - Visualization-only secondary datasets, see compareDatasets()
 };
 
 const searchInput = document.getElementById('search-input');
@@ -197,6 +198,82 @@ function chartConfigOf(slot) {
   };
 }
 
+// The dataset(s) a Visualization-page chart slot can be pointed at: the primary analyzed dataset
+// plus whatever's been added via "Compare another dataset" (Visualization-only; every other page
+// only ever knows about the primary state.dataset/state.analysis).
+function compareDatasets() {
+  const primaryFields = Object.keys((state.analysis?.preview || [])[0] || {});
+  const primary = {dataset_id: state.dataset?.dataset_id, name: state.analysis?.dataset_name || 'Primary dataset', fields: primaryFields, isPrimary: true};
+  return [primary, ...state.comparisonDatasets];
+}
+
+function populateSlotDatasetSelect(slot) {
+  const all = compareDatasets();
+  const wrapper = slot.datasetSelect.closest('.chart-dataset-label');
+  wrapper.hidden = all.length < 2;
+  const current = slot.datasetId || all[0].dataset_id;
+  slot.datasetSelect.innerHTML = all.map((d) => `<option value="${escapeHtml(d.dataset_id)}">${d.isPrimary ? 'Primary: ' : ''}${escapeHtml(_short(d.name, 28))}</option>`).join('');
+  slot.datasetSelect.value = current;
+  slot.datasetId = slot.datasetSelect.value || all[0].dataset_id;
+}
+
+function _short(text, limit) {
+  text = String(text || '');
+  return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
+}
+
+// Refreshes every open chart slot's dataset dropdown (e.g. after a comparison dataset is added or
+// removed) without disturbing which dataset each slot currently has selected.
+function refreshAllSlotDatasetSelects() {
+  chartSlots.forEach((slot) => {
+    if (!slot.datasetSelect) return;
+    const all = compareDatasets();
+    const stillExists = all.some((d) => d.dataset_id === slot.datasetId);
+    if (!stillExists) { slot.datasetId = all[0].dataset_id; renderChart(slot); }
+    populateSlotDatasetSelect(slot);
+  });
+}
+
+function renderCompareBar() {
+  const bar = document.getElementById('compare-bar');
+  const chips = document.getElementById('compare-chips');
+  if (!bar || !chips) return;
+  bar.hidden = !state.analysis;
+  const all = compareDatasets();
+  chips.innerHTML = all.map((d) => `
+    <span class="compare-chip${d.isPrimary ? ' is-primary' : ''}">
+      ${escapeHtml(_short(d.name, 24))}
+      ${d.isPrimary ? '' : `<button type="button" class="compare-chip-remove" data-remove-compare="${escapeHtml(d.dataset_id)}" aria-label="Stop comparing ${escapeHtml(d.name)}">&times;</button>`}
+    </span>
+  `).join('');
+  chips.querySelectorAll('[data-remove-compare]').forEach((btn) => btn.addEventListener('click', () => {
+    state.comparisonDatasets = state.comparisonDatasets.filter((d) => d.dataset_id !== btn.dataset.removeCompare);
+    renderCompareBar();
+    refreshAllSlotDatasetSelects();
+  }));
+}
+
+// Loads a dataset for side-by-side comparison in Visualization only - unlike loadDatasetFromSlug,
+// this never touches state.dataset/state.analysis (the primary dataset every other page reads),
+// so Overview/Ask/Export are completely unaffected by what's been added here.
+async function addComparisonDataset(id) {
+  const isHf = id.startsWith('hf:');
+  const endpoint = isHf ? '/datasets/hf/analyze' : '/datasets/analyze';
+  const body = isHf ? {ref: id.slice(3)} : {slug: id};
+  const response = await fetch(`${API_BASE}${endpoint}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.detail || 'Could not load this dataset for comparison.');
+  }
+  const json = await response.json();
+  const fields = Object.keys((json.analysis?.preview || [])[0] || {});
+  if (!fields.length) throw new Error('This dataset has no columns to chart.');
+  state.comparisonDatasets = state.comparisonDatasets.filter((d) => d.dataset_id !== json.dataset.dataset_id);
+  state.comparisonDatasets.push({dataset_id: json.dataset.dataset_id, name: json.analysis?.dataset_name || json.dataset.dataset_id, fields, source: isHf ? 'huggingface' : 'kaggle'});
+  renderCompareBar();
+  refreshAllSlotDatasetSelects();
+}
+
 // Charts are drawn by the server from the FULL cached dataframe (the browser only holds a
 // 300-row preview). The old in-browser renderer below stays as a fallback for when the
 // server-side copy has expired or the request fails, so a chart never just disappears.
@@ -204,12 +281,13 @@ async function renderChart(slot) {
   if (!state.analysis) return;
   window.markProjectDirty?.();
   const token = (slot.renderToken = (slot.renderToken || 0) + 1);
-  if (state.dataset?.dataset_id) {
+  const datasetId = slot.datasetId || state.dataset?.dataset_id;
+  if (datasetId) {
     try {
       const response = await fetch(`${API_BASE}/charts/render`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({dataset_id: state.dataset.dataset_id, config: chartConfigOf(slot)}),
+        body: JSON.stringify({dataset_id: datasetId, config: chartConfigOf(slot)}),
       });
       if (token !== slot.renderToken) return; // a newer request superseded this one
       if (response.ok) {
@@ -219,6 +297,14 @@ async function renderChart(slot) {
     } catch (error) { /* fall through to the preview renderer */ }
   }
   if (token !== slot.renderToken) return;
+  // The in-browser fallback only ever has the primary dataset's preview rows cached - for a chart
+  // pointed at a comparison dataset there's nothing sensible to fall back to, so show an error
+  // instead of silently rendering the wrong dataset's data under this chart's title.
+  if (datasetId && datasetId !== state.dataset?.dataset_id) {
+    slot.notesEl.hidden = false;
+    slot.notesEl.innerHTML = '<p>Could not reach the server to render this comparison chart. Try again in a moment.</p>';
+    return;
+  }
   slot.notesEl.hidden = true;
   renderChartFromPreview(slot);
 }
@@ -377,13 +463,15 @@ function resizeAllCharts() {
   });
 }
 
-function createChartSlot(label, fields, recommendation, savedConfig) {
+function createChartSlot(label, fields, recommendation, savedConfig, datasetId) {
   const node = chartTemplate.content.firstElementChild.cloneNode(true);
   node.querySelector('.chart-card-label').textContent = label;
   editorEl.appendChild(node);
   const slot = {
     card: node,
     label,
+    datasetId: datasetId || savedConfig?.datasetId || state.dataset?.dataset_id,
+    datasetSelect: node.querySelector('.chart-dataset'),
     type: node.querySelector('.chart-type'),
     x: node.querySelector('.chart-x'),
     y: node.querySelector('.chart-y'),
@@ -420,11 +508,28 @@ function createChartSlot(label, fields, recommendation, savedConfig) {
   slot.granularity.value = cfg.granularity || 'none';
   slot.titleInput.value = cfg.customTitle || '';
   updateGranularityVisibility(slot);
+  populateSlotDatasetSelect(slot);
 
   [slot.type, slot.x, slot.y, slot.agg, slot.group, slot.sort, slot.granularity].forEach((control) => control.addEventListener('change', () => {
     updateGranularityVisibility(slot);
     renderChart(slot);
   }));
+  slot.datasetSelect.addEventListener('change', () => {
+    slot.datasetId = slot.datasetSelect.value;
+    const picked = compareDatasets().find((d) => d.dataset_id === slot.datasetId);
+    const newFields = picked ? picked.fields : fields;
+    const keep = {x: slot.x.value, y: slot.y.value, group: slot.group.value};
+    const descriptions = picked?.isPrimary ? {...(state.dataset?.inferred_column_descriptions || {}), ...(state.dataset?.column_descriptions || {})} : {};
+    slot.x.innerHTML = fieldOptions(newFields, false, 'None', descriptions);
+    slot.y.innerHTML = fieldOptions(newFields, true, 'None', descriptions);
+    slot.group.innerHTML = fieldOptions(newFields, true, 'No grouping', descriptions);
+    // keep the same field selected when the new dataset happens to share it, otherwise fall back
+    // to this dataset's own first column rather than silently rendering against a missing field
+    slot.x.value = newFields.includes(keep.x) ? keep.x : (newFields[0] || '');
+    slot.y.value = newFields.includes(keep.y) ? keep.y : '';
+    slot.group.value = newFields.includes(keep.group) ? keep.group : '';
+    renderChart(slot);
+  });
   let titleTimer = null;
   slot.titleInput.addEventListener('input', () => {
     clearTimeout(titleTimer);
@@ -1542,6 +1647,7 @@ function restoreSavedAnalysis(id) {
   state.slug = item.slug || null;
   state.projectId = null;
   state.projectName = item.name || null;
+  state.comparisonDatasets = [];
   resetExportTitles();
   state.findings = item.findings || [];
   // older saves stored just the description text; keep those readable (they can't be replayed)
@@ -1612,12 +1718,12 @@ const SEARCH_SOURCES = {
   kaggle: {
     label: 'Kaggle', heading: 'Find a Kaggle dataset', placeholder: 'Search Kaggle datasets...',
     hint: "Search results show each dataset's license. Only a bounded sample is streamed unless you run a full analysis.",
-    searching: 'Searching Kaggle...', endpoint: '/datasets/search', licenseFallback: 'check on Kaggle', viewLabel: 'View on Kaggle',
+    searching: 'Searching Kaggle...', endpoint: '/datasets/search', licenseFallback: 'unspecified', viewLabel: 'View on Kaggle',
   },
   huggingface: {
     label: 'Hugging Face', heading: 'Find a Hugging Face dataset', placeholder: 'Search Hugging Face datasets...',
     hint: "Every public dataset is streamed as ready-to-read rows - no download needed for a sample. Gated datasets need an HF_TOKEN configured on the server.",
-    searching: 'Searching Hugging Face...', endpoint: '/datasets/hf/search', licenseFallback: 'check on Hugging Face', viewLabel: 'View on Hugging Face',
+    searching: 'Searching Hugging Face...', endpoint: '/datasets/hf/search', licenseFallback: 'unspecified', viewLabel: 'View on Hugging Face',
   },
 };
 let searchSource = 'kaggle';
@@ -1671,11 +1777,15 @@ async function searchDatasets() {
     resultsEl.innerHTML = results
       .map((item) => `
         <div class="result-item">
-          <strong>${escapeHtml(item.title || 'Dataset')}</strong>
-          <div>${escapeHtml(item.subtitle || '')}</div>
-          <div style="margin-top: 8px; color: #9ca3af;">${escapeHtml(item.size || '')}${item.is_demo ? '' : `<span class="chip license-chip">License: ${escapeHtml(item.license || copy.licenseFallback)}</span>`}${item.gated ? '<span class="chip gated-chip" title="Requires an HF_TOKEN with access to this dataset">Gated</span>' : ''}</div>
-          <button class="btn secondary" style="margin-top: 10px;" data-analyze-slug="${escapeHtml(item.slug || item.id || 'demo')}">Analyze</button>
-          ${item.url ? `<a class="btn secondary" style="display: inline-block; margin: 10px 0 0 6px; text-decoration: none;" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(copy.viewLabel)}</a>` : ''}
+          <div class="result-body">
+            <strong class="result-title" title="${escapeHtml(item.title || 'Dataset')}">${escapeHtml(item.title || 'Dataset')}</strong>
+            <p class="result-subtitle">${escapeHtml(item.subtitle || '')}</p>
+            <div class="result-meta">${item.size ? `<span>${escapeHtml(item.size)}</span>` : ''}${item.is_demo ? '' : `<span class="chip license-chip" title="License: ${escapeHtml(item.license || copy.licenseFallback)}">License: ${escapeHtml(item.license || copy.licenseFallback)}</span>`}${item.gated ? '<span class="chip gated-chip" title="Requires an HF_TOKEN with access to this dataset">Gated</span>' : ''}</div>
+          </div>
+          <div class="result-actions">
+            <button class="btn secondary" data-analyze-slug="${escapeHtml(item.slug || item.id || 'demo')}">Analyze</button>
+            ${item.url ? `<a class="result-view-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer" title="${escapeHtml(copy.viewLabel)}" aria-label="${escapeHtml(copy.viewLabel)}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>` : ''}
+          </div>
         </div>
       `)
       .join('');
@@ -1711,6 +1821,7 @@ async function uploadDataset() {
     state.transformLog = [];
     state.projectId = null;
     state.projectName = null;
+    state.comparisonDatasets = [];
     resetExportTitles();
     resetTransformBtn.hidden = true;
     downloadFullBtn.hidden = true;
@@ -1753,6 +1864,7 @@ async function loadDatasetFromSlug(id, {full = false} = {}) {
   state.transformLog = [];
   state.projectId = null;
   state.projectName = null;
+  if (!full) state.comparisonDatasets = [];    // "Run full analysis" refreshes the same dataset, not a new one - comparisons stay
   resetExportTitles();
   resetTransformBtn.hidden = true;
   downloadFullBtn.hidden = isHf;    // no ZIP download for Hugging Face sources yet - use "Run full analysis" instead
@@ -1771,6 +1883,7 @@ async function loadDemoData() {
   state.transformLog = [];
   state.projectId = null;
   state.projectName = null;
+  state.comparisonDatasets = [];
   resetExportTitles();
   resetTransformBtn.hidden = true;
   downloadFullBtn.hidden = true;
@@ -1808,6 +1921,7 @@ function renderAnalysis(options = {}) {
   pill.hidden = false;
   pill.textContent = state.analysis.dataset_name || 'dataset';
   renderAnalysisNameChip();
+  renderCompareBar();
   document.getElementById('site-nav').classList.add('has-data');
   document.getElementById('tour-btn').hidden = false;
 
@@ -1890,6 +2004,72 @@ addChartBtn.addEventListener('click', () => {
   createChartSlot(`Custom chart ${chartSlots.length + 1}`, fields);
   resizeAllCharts();
 });
+
+// Plain [id].hidden toggling here, not social.js's openOverlay/closeOverlay/bindOverlayClose
+// helpers - those are defined in social.js, which loads AFTER app.js, so calling them at this
+// top level (script parse/execute time, not inside a later event handler) would throw a
+// ReferenceError and abort the rest of app.js's initialization before it finished running.
+document.getElementById('add-compare-dataset-btn').addEventListener('click', () => {
+  document.getElementById('compare-results').innerHTML = '';
+  document.getElementById('compare-results-count').textContent = '';
+  document.getElementById('compare-search-input').value = '';
+  document.getElementById('compare-overlay').hidden = false;
+  document.getElementById('compare-search-input').focus();
+});
+document.getElementById('compare-close').addEventListener('click', () => { document.getElementById('compare-overlay').hidden = true; });
+document.getElementById('compare-overlay').addEventListener('click', (event) => {
+  if (event.target.id === 'compare-overlay') document.getElementById('compare-overlay').hidden = true;
+});
+
+async function searchCompareDatasets() {
+  const query = document.getElementById('compare-search-input').value.trim();
+  const resultsEl2 = document.getElementById('compare-results');
+  const countEl = document.getElementById('compare-results-count');
+  if (!query) { countEl.textContent = ''; resultsEl2.innerHTML = '<div class="result-item">Enter a dataset keyword to search.</div>'; return; }
+  countEl.textContent = '';
+  resultsEl2.innerHTML = '<div class="result-item">Searching Kaggle and Hugging Face...</div>';
+  const [kaggleRes, hfRes] = await Promise.allSettled([
+    fetch(`${API_BASE}/datasets/search?query=${encodeURIComponent(query)}&limit=20`).then((r) => r.json()),
+    fetch(`${API_BASE}/datasets/hf/search?query=${encodeURIComponent(query)}&limit=20`).then((r) => r.json()),
+  ]);
+  const kaggle = (kaggleRes.status === 'fulfilled' ? kaggleRes.value.results : []) || [];
+  const hf = (hfRes.status === 'fulfilled' ? hfRes.value.results : []) || [];
+  const results = [...kaggle.map((r) => ({...r, source: 'kaggle'})), ...hf.map((r) => ({...r, source: 'huggingface'}))].filter((r) => !r.is_demo);
+  const alreadyLoaded = new Set([state.dataset?.dataset_id, ...state.comparisonDatasets.map((d) => d.dataset_id)]);
+  if (!results.length) { resultsEl2.innerHTML = '<div class="result-item">No results found.</div>'; return; }
+  countEl.textContent = `${results.length.toLocaleString()} dataset${results.length === 1 ? '' : 's'} found (${kaggle.length} Kaggle, ${hf.length} Hugging Face)`;
+  resultsEl2.innerHTML = results.map((item) => {
+    const id = item.slug || item.id;
+    const loaded = alreadyLoaded.has(id);
+    return `
+    <div class="result-item">
+      <div class="result-body">
+        <strong class="result-title" title="${escapeHtml(item.title || 'Dataset')}">${escapeHtml(item.title || 'Dataset')}</strong>
+        <p class="result-subtitle">${escapeHtml(item.subtitle || '')}</p>
+        <div class="result-meta"><span class="chip source-chip">${item.source === 'huggingface' ? 'Hugging Face' : 'Kaggle'}</span>${item.license ? `<span class="chip license-chip" title="License: ${escapeHtml(item.license)}">License: ${escapeHtml(item.license)}</span>` : ''}</div>
+      </div>
+      <div class="result-actions">
+        <button class="btn secondary" data-compare-add="${escapeHtml(id)}" ${loaded ? 'disabled' : ''}>${loaded ? 'Already added' : 'Add to comparison'}</button>
+      </div>
+    </div>`;
+  }).join('');
+  resultsEl2.querySelectorAll('[data-compare-add]').forEach((btn) => btn.addEventListener('click', async () => {
+    const original = btn.textContent;
+    btn.textContent = 'Adding...';
+    btn.disabled = true;
+    try {
+      await addComparisonDataset(btn.dataset.compareAdd);
+      document.getElementById('compare-overlay').hidden = true;
+      toast?.('Added to comparison');
+    } catch (error) {
+      btn.textContent = original;
+      btn.disabled = false;
+      toast?.(error.message, 'bad');
+    }
+  }));
+}
+document.getElementById('compare-search-btn').addEventListener('click', searchCompareDatasets);
+document.getElementById('compare-search-input').addEventListener('keydown', (event) => { if (event.key === 'Enter') searchCompareDatasets(); });
 addDatasetEditorBtn.addEventListener('click', () => {
   createDatasetEditorSlot(`Dataset editor ${datasetEditorSlots.length + 1}`);
   resizeAllCharts();

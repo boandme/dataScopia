@@ -1,6 +1,6 @@
 # DataScopia
 
-*A Kaggle Dataset Analysis & AI Research Workspace.*
+*A Kaggle + Hugging Face Dataset Analysis & AI Research Workspace.*
 
 ## Run DataScopia
 
@@ -34,6 +34,8 @@ python -m flask --app apps/api/app/main.py run --debug --host 127.0.0.1 --port 8
 3. When prompted, set the two required environment variables — your Kaggle API credentials from [kaggle.com/settings → API → Create New Token](https://www.kaggle.com/settings), which downloads a `kaggle.json` containing them:
    - `KAGGLE_USERNAME`
    - `KAGGLE_KEY`
+
+   Hugging Face needs no credentials at all for public datasets — searching and analyzing them works out of the box. Set `HF_TOKEN` only if you need gated datasets or a higher rate limit.
 4. Deploy. Render builds with `pip install -r requirements.txt` and starts the app with `python -m waitress --host=0.0.0.0 --port=$PORT --threads=8 wsgi:app` — the same production WSGI server (`waitress`), verified locally, that Render's Linux container will run. You get a public `https://<your-app>.onrender.com` URL serving the full app, frontend and API together, exactly like `run.py` does locally.
 
 No manual dashboard configuration is required — everything Render needs is already in `render.yaml`. If you'd rather configure it by hand (or use a different host like Railway or Fly.io that also runs a plain Python web service), the build command is `pip install -r requirements.txt` and the start command is the one in `Procfile`.
@@ -44,20 +46,20 @@ Render's free tier spins the service down after ~15 minutes idle; the first requ
 
 ### Storage model
 
-Dataset analysis does not require downloading the full dataset anywhere — not to the browser, and not to the API server. By default, `/datasets/analyze` streams only a bounded sample (`ANALYSIS_SAMPLE_MB`, default 5 MB) of the dataset's primary file directly from Kaggle: CSV/TSV files are read up to that byte limit and truncated at the last complete row, and Parquet files use HTTP range requests via `pyarrow`/`fsspec` to read only as many row groups as needed, using the file's footer metadata for an exact row count. Nothing is written to disk.
+Dataset analysis does not require downloading the full dataset anywhere — not to the browser, and not to the API server. For Kaggle, `/datasets/analyze` streams only a bounded sample (`ANALYSIS_SAMPLE_MB`, default 5 MB) of the dataset's primary file directly from Kaggle: CSV/TSV files are read up to that byte limit and truncated at the last complete row, and Parquet files use HTTP range requests via `pyarrow`/`fsspec` to read only as many row groups as needed, using the file's footer metadata for an exact row count. For Hugging Face, `/datasets/hf/analyze` reads a bounded number of rows directly from Hugging Face's Datasets Server (`/rows`), which is already pre-converted and paginated server-side — no byte-range streaming or format sniffing needed. Nothing is written to disk either way.
 
-Two opt-in paths exist for when a full copy is actually needed:
+Two opt-in paths exist per source for when a full copy is actually needed:
 
-- **Run full analysis** (`/datasets/analyze-full`) downloads the dataset to a temporary server workspace, profiles it in full, then deletes the workspace — useful when sample-based statistics aren't precise enough.
-- **Download full dataset** (`/datasets/download-file`) returns a ZIP archive of the raw files for the user to keep.
+- **Run full analysis** (`/datasets/analyze-full`, `/datasets/hf/analyze-full`) reads the complete dataset — for Kaggle, downloaded to a temporary server workspace and deleted afterward; for Hugging Face, read from the Parquet export Hugging Face already generates — useful when sample-based statistics aren't precise enough.
+- **Download full dataset** (`/datasets/download-file`, Kaggle only for now) returns a ZIP archive of the raw files for the user to keep.
 
 Neither full-dataset path is required to get a Research Snapshot, recommended visualizations, or AI analysis.
 
-A research-focused open-source platform for exploring, analyzing, and understanding Kaggle datasets with the help of intelligent automated analysis, interactive visualizations, and an AI-assisted research workflow.
+A research-focused open-source platform for exploring, analyzing, and understanding datasets from Kaggle and Hugging Face with the help of intelligent automated analysis, interactive visualizations, and an AI-assisted research workflow.
 
 ## Purpose
 
-This project is designed to help students, researchers, analysts, and data science practitioners move quickly from “I found a Kaggle dataset” to “I understand the dataset, can evaluate its quality, and can run meaningful analyses on it.”
+This project is designed to help students, researchers, analysts, and data science practitioners move quickly from “I found a dataset on Kaggle or Hugging Face” to “I understand the dataset, can evaluate its quality, and can run meaningful analyses on it.”
 
 Instead of presenting a generic dashboard full of charts, the app focuses on data understanding: identifying the dataset’s structure, highlighting what matters, recommending meaningful analyses, and enabling users to explore and document findings in a research-oriented workspace.
 
@@ -72,7 +74,7 @@ Instead of presenting a generic dashboard full of charts, the app focuses on dat
 
 ## Core Goals
 
-- Search and add Kaggle datasets into a local workspace
+- Search and add datasets from Kaggle or Hugging Face into a local workspace
 - Automatically profile datasets and detect schema characteristics
 - Generate a research snapshot before deeper analysis
 - Recommend the most relevant visualizations for each dataset
@@ -84,7 +86,7 @@ Instead of presenting a generic dashboard full of charts, the app focuses on dat
 
 ## Example Workflow
 
-1. Search for a Kaggle dataset.
+1. Search for a dataset on Kaggle or Hugging Face.
 2. Preview metadata, files, and basic schema.
 3. Load the dataset into the workspace.
 4. Automatically identify column types, missingness, outliers, and likely targets.
@@ -109,7 +111,7 @@ The project is intentionally designed around the idea of understanding dataset c
 ## Feature Highlights
 
 ### Dataset Discovery and Workspace Management
-- Kaggle dataset search and metadata preview
+- Kaggle and Hugging Face dataset search and metadata preview
 - Multi-dataset workspace support
 - Dataset switching and comparison
 - Basic dataset compatibility assessment for joins or merges
@@ -209,19 +211,35 @@ kaggle_datasetAnalysis/
 - **v1.1** (2026-09-27) — Firebase. **Accounts** now use Firebase Authentication (email/password, Google, password reset, email verification; the server verifies ID tokens with Google's public keys and starts a session cookie), and **storage** can move to the Firebase Realtime Database + Cloud Storage via a service account (`apps/api/app/firebase.py`, `docstore.py`; REST APIs, no Admin SDK). Everything falls back to local SQLite/files, and `DATASCOPIA_AUTH=local` keeps the built-in accounts. Setup: [docs/FIREBASE_SETUP.md](docs/FIREBASE_SETUP.md).
 - **v1.25** (2026-09-27) — Redesigned sign-in/account-settings UI (split visual panel, icon-led fields, password-visibility toggle, redesigned account menu). Notebook export now runs the same deep-statistics engine as the PDF (`report_deep.py`/`report_stats.py`): a "Deep statistical interpretation" subsection and evidence-led conclusions, plus a reproducibility fingerprint shared with the PDF so both exports of the same analysis can be confirmed to match. The PDF report gained a clickable Contents page and a full section outline in the PDF viewer's sidebar (fixed a `NumberedCanvas` bug where deferred page commits bound every bookmark to page 1). Every chart (`analysis/charts.py`) now draws a bordered, ticked frame on both axes for a proper scientific-figure look, and a real bug is fixed where a scatter chart's extrapolated trend line could stretch the y-axis far past the actual data, squeezing every real point into a sliver of the chart — the axis range is now fixed to the data itself. Export titles default to whatever the analysis was already named (the saved/cloud project name) instead of a generic guess, and the file name reliably keeps following the title as it's edited.
 - **v1.28** (2026-09-28) — **Hugging Face** as a second dataset source (`dataset/huggingface.py`, new `/datasets/hf/*` routes): a Kaggle/Hugging Face toggle on the Datasets page shares one search-results UI and one "Analyze" pipeline for both, namespaced as `hf:owner/name` so a same-named dataset on either site can't collide in the cache. Sampling reads Hugging Face's Datasets Server as ready-to-use JSON rows (no file-format sniffing needed); "Run full analysis" reads the Parquet export Hugging Face already generates for every public dataset. Notebook/PDF exports cite the right source and the notebook's loading cell can re-download the full dataset with just `requests`+`pyarrow`. License recognition now also covers MIT/Apache/BSD/ISC/Unlicense. Also: fixed the export-title dialog carrying a previous analysis's remembered title into a brand-new one, and added a "Name this analysis" control in the header to set the export-title default at any time.
+- **v1.3** (2026-09-30) — **Multi-dataset comparison in Visualization.** "Compare another dataset" federates search across Kaggle and Hugging Face without touching the primary dataset the rest of the app reads; each chart card gets its own "Data" selector, so different charts can show different datasets side by side - scoped to Visualization only, by design. Fixed a real bug found while testing it: the demo dataset's analysis never included preview rows, so "Load demo data" silently left Visualization showing "load a dataset first" even with data loaded. Fixed the Hugging Face (and Kaggle) results grid cutting off descriptions and letting a long license chip crowd the Analyze button - cards now clamp content and pin actions to the bottom so a row lines up cleanly. Generalized the dataset-graph crawler to `tools/index_catalogue.py --provider kaggle|huggingface|both`.
+- **v1.31** (2026-09-30) — **Google sign-in, completed.** It was already wired up correctly from the Firebase integration; this pass added the one real gap (your Google profile photo now shows in the header/account menu instead of just initials, with a broken-image fallback) and fixed the `Cross-Origin-Opener-Policy` console error every popup sign-in triggered, by sending the header Firebase's own docs recommend (`same-origin-allow-popups`). A related warning from Google's own sign-in pages is outside this app's control and has always been non-fatal (Firebase falls back to a different cross-window channel) - sign-in completes despite it.
 
 ## Roadmap: what's still needed to be a genuinely useful tool
 
-The MVP checklist above is functionally complete for a *single* dataset, single-session workflow. The gaps below are what stand between that and something students, researchers, and analysts would actually adopt for real work — not just a demo.
+Everything in the original MVP checklist is done — persistent projects, in-app cleaning, shareable exports (notebook + PDF, both now with a full deep-statistics engine and evidence ratings), a standalone Data Quality Report, guided onboarding (a welcome card and spotlight tour on first load), and a Render-ready hosted deployment. Two dataset sources (Kaggle, Hugging Face) are live. The gaps below are what stand between that and something students, researchers, and analysts would adopt for real, ongoing work.
 
-1. **True multi-dataset workspace.** Load, switch between, and compare two or more datasets at once; surface likely join keys (e.g. Country + Year) between them. This was explicit MVP scope and is currently entirely unbuilt — the app only ever holds one active dataset in memory.
-2. ~~**Persistent projects.**~~ Done (v0.4) — localStorage-backed saved analyses with a "Past Analyses" panel, named saves, and full resume (dataset, charts, findings, transform log).
-3. **A genuinely agentic AI layer.** The Q&A engine answers one question at a time against a fixed dataframe, with no memory between questions and no chaining ("filter to 2020, then check the correlation"). This is also the natural place to plug in a real LLM backend behind the existing `(question, dataframe) -> QAResult` contract, instead of today's deterministic intent-matching.
-4. ~~**In-app data cleaning and transformation.**~~ Done (v0.4) — filter/clean/merge-columns, composable and reset-able, applied server-side on the full analyzed sample.
-5. ~~**Shareable exports beyond a notebook.**~~ Done (v0.4/v0.42) — per-chart image export and a server-side PDF research report with real statistical narrative, not just a stats dump.
-6. ~~**A first-class, standalone Data Quality Report.**~~ Done (v0.6) — scored report, one-click fixes, Markdown export. (Original note:) Data-quality narrative is now woven into the PDF export's "Data Quality Assessment" section, and license text is surfaced in the dataset description panel — but there's still no dedicated, exportable data-quality artifact independent of the full report.
-7. **Onboarding.** No guided first run and no visible "what can I ask" reference beyond a one-line hint — most of what the Q&A engine can do (statistical tests, ML baselines, trend detection) is undiscoverable unless you already know to ask for it.
-8. ~~**Actual hosted deployment.**~~ Deployment-ready (v0.5): `wsgi.py`, `Procfile`, and `render.yaml` are set up for a one-Blueprint deploy to Render (or any host that runs a plain Python web service), with credentials handled via environment variables instead of a committed `.env` — see [Deploying to Render](#deploying-to-render-a-real-hosted-url). Actually clicking through Render's dashboard to stand up a live URL is still a manual, one-time step outside this repo. Caveat worth tracking as usage grows: the in-memory `workspace_cache` (no database) means this is currently a single-process deployment, not one that scales to multiple workers/instances without further work.
+**Most differentiating, in priority order:**
+
+1. **A guided "Analyze for me" mode.** One click → automatic audit → safe one-click fixes applied → the best-fitting charts chosen → a narrated story of what the data shows, for a user who doesn't yet know what to ask. A beginner-friendly on-ramp that's also the strongest "not just another Kaggle wrapper" pitch.
+2. **A real LLM layer behind the Q&A engine.** Today's Q&A answers one question at a time against a fixed dataframe with deterministic intent-matching - no memory between questions, no chaining ("filter to 2020, then check the correlation"). The engine's `(question, dataframe) -> QAResult` contract is designed so an LLM can sit in front of it as a planner (decides *what* to compute) while the deterministic engine stays the source of truth for *how* - the answer is always grounded in a real computation, never a hallucinated one.
+3. **More dataset sources**, extending the `dataset/huggingface.py`-style pattern (a search + license + sample/full-read module, namespaced dataset ids, a matching pair of Flask routes):
+   - **Socrata** (Chicago, NYC, CDC, data.ny.gov, …) and **CKAN** (data.gov, data.gov.uk, data.europa.eu, …) — one adapter each covers many government portals, and both support server-side sampling/aggregation instead of a byte-range guess.
+   - **OpenML** — every dataset is tabular with a declared target column, which plugs directly into the existing target-detection and baseline-model code.
+   - **Zenodo / Harvard Dataverse / Figshare** — research data with DOIs, which make better citations in the PDF report than a bare URL.
+   - **FRED, World Bank, OECD/Eurostat/IMF** — country-year and date time series, exactly what the dataset-graph's join-key matching (country/state/year) is built for.
+   - **BigQuery public datasets, data.world** — SQL-queryable, so aggregates can be computed over the full data without downloading anything.
+4. **Per-user credential storage.** Right now every provider's credentials (`KAGGLE_USERNAME`/`KAGGLE_KEY`, `HF_TOKEN`) are server-wide environment variables - fine for a personal instance, but a hosted multi-user app needs a "Connected sources" page in account settings, encrypted at rest, so gated/private data uses *that user's* credentials rather than the server's.
+5. **A formal `DatasetProvider` interface.** Kaggle and Hugging Face are each their own hand-written module today; formalizing the shared shape (search / metadata / sample / full-read / notebook-loader-code) as a real interface makes adding a fourth and fifth source mechanical instead of bespoke, and is worth doing once there are 3+ sources rather than upfront.
+
+**Other known gaps:**
+
+- ~~**True side-by-side multi-dataset workspace.**~~ Done (v1.3), scoped to Visualization only: "Compare another dataset" federates search across Kaggle and Hugging Face and each chart card gets its own dataset selector, without touching the single primary dataset Overview/Ask/Export still read. Every *other* page still only ever holds one active dataset, which was a deliberate scope line, not an oversight - those pages describe and document *the* dataset being analyzed, where "which one" should never be ambiguous.
+- **Moderation/reporting for public Explore analyses.** Anyone can publish a verified analysis; there's no report/flag/takedown path yet.
+- **Email verification and password reset for local accounts.** Firebase-mode accounts already get both for free from Firebase Auth; `DATASCOPIA_AUTH=local` accounts have neither, since there's no email service wired up (needs an SMTP/provider decision - see note below).
+- ~~**Seed the dataset-graph catalogue.**~~ The crawler (`tools/index_catalogue.py --provider kaggle|huggingface|both`, v1.3) now covers both sources from one command; it still hasn't actually been *run* against a real batch of datasets, so the catalogue remains organically-grown only. Running it (especially once the country/year-heavy economic sources below exist) is what would make "find joinable datasets" useful from day one rather than only after real usage accumulates.
+- **Multi-instance scaling.** Covered in [Deploying to Render](#deploying-to-render-a-real-hosted-url) - the in-memory `workspace_cache` needs a shared store (e.g. Redis) before this can run on more than one worker process.
+
+A few of the items above are flagged rather than built because they need a decision only the project owner can make, not just engineering time: an email-sending provider (SMTP, SendGrid, Resend, …) for verification/reset, and - for the LLM layer above - which model/API and what the per-query cost budget looks like before it's wired into a live endpoint.
 
 ## Open-Source Goals
 
@@ -237,8 +255,8 @@ This project is intended to be community-friendly and contributor-driven. The de
 
 ## Licensing and Responsibility
 
-The platform must respect dataset licensing, Kaggle API rules, and platform usage restrictions. The software should be built to support compliant usage and give users clear information about whether data can be downloaded, redistributed, or exported.
+The platform must respect dataset licensing, the Kaggle and Hugging Face API terms, and platform usage restrictions. The software should be built to support compliant usage and give users clear information about whether data can be downloaded, redistributed, or exported.
 
 ## Status
 
-Past the planning phase — see [Version History](#version-history) above. The single-dataset MVP loop (search → sample-based analyze → Q&A → charts → save findings → export notebook) works end-to-end against live Kaggle data. See [Roadmap](#roadmap-whats-still-needed-to-be-a-genuinely-useful-tool) for what's next, in priority order.
+Past the planning phase — see [Version History](#version-history) above. The single-dataset MVP loop (search → sample-based analyze → Q&A → charts → save findings → export notebook) works end-to-end against live Kaggle and Hugging Face data. See [Roadmap](#roadmap-whats-still-needed-to-be-a-genuinely-useful-tool) for what's next, in priority order.

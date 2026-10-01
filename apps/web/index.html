@@ -239,6 +239,20 @@
         </div>
       </div>
 
+      <div class="modal-overlay" id="compare-overlay" hidden>
+        <div class="modal-box join-box" role="dialog" aria-modal="true" aria-labelledby="compare-title">
+          <button type="button" class="welcome-close" id="compare-close" aria-label="Close">&times;</button>
+          <h3 id="compare-title">Compare another dataset</h3>
+          <p class="hint">Search Kaggle and Hugging Face at once. Adding a dataset here only affects Visualization — it won't replace your primary dataset on the other pages.</p>
+          <div class="search-box">
+            <input id="compare-search-input" placeholder="Search Kaggle and Hugging Face..." />
+            <button class="btn" id="compare-search-btn" type="button">Search</button>
+          </div>
+          <div id="compare-results-count" class="results-count"></div>
+          <div id="compare-results" class="results compare-results"></div>
+        </div>
+      </div>
+
       <div class="toast-host" id="toast-host" aria-live="polite"></div>
 
       <main id="page-host">
@@ -386,6 +400,14 @@
           <section class="panel" id="workspace-panel">
             <p class="hint" id="workspace-empty-hint">Load a dataset to start building charts and dataset editors.</p>
             <div id="viz-section" hidden>
+            <div class="compare-bar" id="compare-bar">
+              <span class="compare-label">Comparing</span>
+              <div class="compare-chips" id="compare-chips"></div>
+              <button class="btn toolbar-btn" id="add-compare-dataset-btn" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Compare another dataset
+              </button>
+            </div>
             <div class="workspace-toolbar">
               <h3>Charts &amp; Dataset Editors</h3>
               <div class="toolbar-actions">
@@ -453,6 +475,7 @@
                 </span>
               </div>
               <div class="editor chart-basic">
+                <label class="chart-dataset-label" hidden>Data<select class="chart-dataset"></select></label>
                 <label>Type<select class="chart-type"></select></label>
                 <label>X field<select class="chart-x"></select></label>
                 <label>Y field<select class="chart-y"></select></label>

@@ -1,5 +1,30 @@
 [
   {
+    "version": "v1.31",
+    "date": "2026-09-30",
+    "name": "Google Sign-In, Completed",
+    "tag": "Accounts",
+    "meta": "Google profile photos",
+    "items": [
+      "Your real Google profile photo now shows in the header and account menu instead of just initials, with a graceful fallback if it ever fails to load. Captured from the Google sign-in token and refreshed on every sign-in, so it follows you if you change it on your Google account.",
+      "Fixed the 'Cross-Origin-Opener-Policy policy would block the window.closed call' console error every Google sign-in attempt triggered: the server now sends the header Firebase's own documentation recommends for popup-based sign-in (`same-origin-allow-popups`). Google's own sign-in pages still log a related warning from their side, which Firebase has always treated as non-fatal (it falls back to a different cross-window channel) - but our half of the problem is fixed.",
+      "Audited the full Google sign-in path end to end (token verification, account linking by email, settings-page handling for password-less Google accounts, account deletion via a fresh Google re-auth) - no other gaps found; it was already correctly implemented from the earlier Firebase integration."
+    ]
+  },
+  {
+    "version": "v1.3",
+    "date": "2026-09-30",
+    "name": "Multi-Dataset Comparison & Polish",
+    "tag": "Visualization",
+    "meta": "Compare datasets",
+    "items": [
+      "Visualization can now hold more than one dataset at once, specifically for comparison: \"Compare another dataset\" opens a federated search across Kaggle and Hugging Face, and each chart card gets its own \"Data\" selector so different charts on the page can show different datasets side by side. This is scoped to Visualization only - Overview, Ask and Export are untouched and keep working against a single primary dataset, same as before.",
+      "Fixed a real bug in \"Load demo data\": the demo dataset's analysis never included the preview rows the frontend needs to build chart fields, so the Visualization page silently showed \"load a dataset first\" even though a dataset was loaded. Found while testing the comparison feature against it.",
+      "Fixed the Hugging Face results grid cutting off descriptions and letting a long license chip crowd the Analyze button - cards now clamp to a fixed number of lines and pin their actions to the bottom, so a row of results lines up cleanly regardless of how long one result's text happens to be. Applies to the Kaggle results grid too, since it's the same shared template.",
+      "Generalized the dataset-graph crawler (`tools/index_kaggle.py`) into `tools/index_catalogue.py --provider kaggle|huggingface|both`, so seeding the join-key catalogue now covers both dataset sources from one command."
+    ]
+  },
+  {
     "version": "v1.28",
     "date": "2026-09-28",
     "name": "Hugging Face as a Second Dataset Source",
