@@ -1,6 +1,20 @@
 # Render Blueprint - lets Render auto-configure the service from this file instead of manual
 # dashboard setup. In the Render dashboard: New -> Blueprint -> select this repo.
 # Docs: https://render.com/docs/blueprint-spec
+#
+# Persistence: accounts/projects/published analyses are stored either in Firebase (if
+# FIREBASE_SERVICE_ACCOUNT + FIREBASE_DATABASE_URL below are filled in) or in a local SQLite file
+# + folder (data/datascopia.db) if they're left blank. The free plan has no persistent disk at
+# all, so on free, local SQLite storage is wiped on every deploy/restart - filling in the Firebase
+# variables is the only way to keep data across deploys on free. On a paid plan you can instead
+# (or additionally) add a persistent disk here and skip Firebase for data (identity still needs
+# Firebase Authentication regardless):
+#   disk:
+#     name: datascopia-data
+#     mountPath: /opt/render/project/data
+#   envVars:
+#     - key: DATASCOPIA_DATA_DIR
+#       value: /opt/render/project/data
 services:
   - type: web
     name: datascopia
@@ -12,14 +26,18 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
-      # Kaggle API credentials - required for dataset search/analyze/download. Get them from
-      # https://www.kaggle.com/settings -> API -> Create New Token, which downloads a
-      # kaggle.json containing these two values. `sync: false` means Render will prompt for
-      # them in its dashboard rather than reading a value from this file, so they're never
-      # committed to the repo.
+      # Kaggle API credentials - needed for the Kaggle dataset source (search/analyze/download).
+      # Get them from https://www.kaggle.com/settings -> API -> Create New Token, which downloads
+      # a kaggle.json containing these two values. `sync: false` means Render will prompt for them
+      # in its dashboard rather than reading a value from this file, so they're never committed to
+      # the repo. The app still runs without them - Hugging Face, file upload and the demo dataset
+      # all work with zero credentials - Kaggle search/analyze just won't.
       - key: KAGGLE_USERNAME
         sync: false
       - key: KAGGLE_KEY
+        sync: false
+      # Optional: only needed for gated Hugging Face datasets or a higher rate limit on public ones.
+      - key: HF_TOKEN
         sync: false
       - key: APP_TITLE
         value: DataScopia

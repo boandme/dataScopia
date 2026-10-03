@@ -66,6 +66,10 @@ WEB_DIR = PROJECT_ROOT / "apps" / "web"
 # The frontend is plain static files (index.html + styles.css + app.js) served from the same origin.
 app = Flask(os.getenv("APP_TITLE", "DataScopia"), static_folder=str(WEB_DIR), static_url_path="/assets")
 CORS(app)
+# Flask's default is unlimited request body size - without a cap, "Use your own file" could accept
+# an upload large enough to exhaust memory on a small instance before the app ever gets a chance to
+# reject it gracefully. A request over this returns a clean 413 instead of an OOM crash.
+app.config["MAX_CONTENT_LENGTH"] = int(float(os.getenv("DATASCOPIA_MAX_UPLOAD_MB", "150")) * 1024 * 1024)
 
 
 @app.after_request

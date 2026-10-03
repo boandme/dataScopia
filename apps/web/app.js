@@ -1810,6 +1810,13 @@ async function uploadDataset() {
   uploadBtn.disabled = true;
   try {
     const response = await fetch(`${API_BASE}/datasets/upload`, {method: 'POST', body: formData});
+    if (response.status === 413) {
+      resultsEl.innerHTML = '<div class="result-item"><strong>Upload failed</strong><div>This file is larger than the server allows. Try a smaller file.</div></div>';
+      return;
+    }
+    // A non-OK response isn't guaranteed to be JSON (e.g. a proxy/server error page), so this
+    // never assumes - a parse failure here falls through to the generic catch below instead of
+    // crashing with an unhandled rejection.
     const json = await response.json();
     if (!response.ok) {
       resultsEl.innerHTML = `<div class="result-item"><strong>Upload failed</strong><div>${json.detail || 'Could not parse this file.'}</div></div>`;

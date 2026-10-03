@@ -60,6 +60,19 @@ def test_upload_requires_file(client):
     assert client.post("/datasets/upload", data={}, content_type="multipart/form-data").status_code == 400
 
 
+def test_upload_over_the_size_cap_is_rejected_cleanly(client):
+    # MAX_CONTENT_LENGTH is set at app-creation time from DATASCOPIA_MAX_UPLOAD_MB; temporarily
+    # shrink it rather than actually uploading 150MB+ to prove the same behavior cheaply.
+    original = main.app.config["MAX_CONTENT_LENGTH"]
+    main.app.config["MAX_CONTENT_LENGTH"] = 100
+    try:
+        oversized = io.BytesIO(b"a,b\n" + b"1,2\n" * 50)
+        response = client.post("/datasets/upload", data={"file": (oversized, "big.csv")}, content_type="multipart/form-data")
+        assert response.status_code == 413
+    finally:
+        main.app.config["MAX_CONTENT_LENGTH"] = original
+
+
 def test_charts_render_all_recommendations(client):
     body = upload(client)
     dataset_id = body["dataset"]["dataset_id"]

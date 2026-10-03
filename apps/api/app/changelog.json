@@ -1,5 +1,17 @@
 [
   {
+    "version": "v1.32",
+    "date": "2026-10-02",
+    "name": "Deployment Readiness",
+    "tag": "Infrastructure",
+    "meta": "Pre-launch audit",
+    "items": [
+      "Fixed a deployment-breaking bug: python-dotenv is imported by the app's entry point but was never listed in requirements.txt, so a genuinely fresh install (exactly what Render's build does) would have crashed on startup. Verified by actually building into a clean virtual environment and booting the real production command.",
+      "Added a request-size cap (DATASCOPIA_MAX_UPLOAD_MB, default 150MB) - 'Use your own file' had no limit at all, so a large upload could exhaust memory on a small instance before the app got a chance to reject it. Fixed the upload error handler to report an oversized file correctly instead of a misleading 'start the API server' message.",
+      "render.yaml now documents the persistence tradeoff directly (Firebase credentials vs. a paid-plan persistent disk) where the README already pointed, and lists HF_TOKEN as a configurable optional variable."
+    ]
+  },
+  {
     "version": "v1.31",
     "date": "2026-09-30",
     "name": "Google Sign-In, Completed",
