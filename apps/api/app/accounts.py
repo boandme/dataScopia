@@ -7,8 +7,13 @@ Two modes (DATASCOPIA_AUTH):
                       starts a session cookie. No password ever reaches this server.
   local               built-in email + password accounts (scrypt), useful offline and in tests.
 
-Sessions are random tokens held in an HttpOnly, SameSite=Lax cookie; only a SHA-256 of the token is stored
-server-side. Every state-changing API request must come from the app's own origin.
+Sessions are random tokens held in an HttpOnly cookie; only a SHA-256 of the token is stored
+server-side. Every state-changing API request must come from the app's own origin - except the one
+origin named in DATASCOPIA_TRUSTED_ORIGIN, if set, which exists for a frontend hosted separately
+from this API (e.g. a GitHub Pages build of apps/web - GitHub Pages only serves static files, so
+it can't run this server itself). Left unset (the default), nothing about CORS, cookies or CSRF
+changes from a same-origin deployment: the cookie stays SameSite=Lax and CORS stays wide open for
+the (non-credentialed) public read endpoints, same as before this existed.
 """
 
 from __future__ import annotations
@@ -40,6 +45,15 @@ def auth_mode() -> str:
     if _mode_override[0]:
         return _mode_override[0]
     return "local" if (os.getenv("DATASCOPIA_AUTH") or "firebase").lower() == "local" else "firebase"
+
+
+def trusted_origin() -> str | None:
+    """The one extra origin (scheme+host, no trailing slash) allowed to make credentialed
+    cross-origin requests - e.g. https://you.github.io for a GitHub Pages frontend. None by
+    default, which is what keeps every CORS/cookie/CSRF behavior below unchanged for a normal
+    same-origin deployment."""
+    value = (os.getenv("DATASCOPIA_TRUSTED_ORIGIN") or "").strip()
+    return value.rstrip("/") or None
 
 
 def set_mode(mode: str | None) -> None:
@@ -79,10 +93,16 @@ def login_required(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 def _set_cookie(response: Any, token: str | None) -> Any:
     secure = request.is_secure or request.headers.get("X-Forwarded-Proto") == "https"
+    # A cross-site fetch (a trusted-origin frontend on a different domain) only ever receives this
+    # cookie back if it's SameSite=None - but browsers refuse SameSite=None without Secure, so this
+    # only activates over HTTPS; a trusted origin configured without HTTPS simply won't get a
+    # working session; the request to the API still fails closed via enforce_same_origin either way.
+    cross_site = bool(trusted_origin()) and request.headers.get("Origin") == trusted_origin()
+    samesite = "None" if cross_site else "Lax"
     if token:
-        response.set_cookie(COOKIE, token, max_age=store.SESSION_DAYS * 86400, httponly=True, samesite="Lax", secure=secure, path="/")
+        response.set_cookie(COOKIE, token, max_age=store.SESSION_DAYS * 86400, httponly=True, samesite=samesite, secure=(secure or cross_site), path="/")
     else:
-        response.delete_cookie(COOKIE, path="/")
+        response.delete_cookie(COOKIE, path="/", samesite=samesite, secure=(secure or cross_site))
     return response
 
 
@@ -122,13 +142,14 @@ def _validate_credentials(email: str, password: str) -> None:
 
 
 def enforce_same_origin(app: Flask) -> None:
-    """Reject state-changing API calls that come from another site (CSRF defence in depth on top of SameSite)."""
+    """Reject state-changing API calls that come from another site (CSRF defence in depth on top of
+    the session cookie's SameSite attribute) - except the configured trusted origin, if any."""
 
     @app.before_request
     def _origin_check() -> None:
         if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.path.startswith("/api/"):
             origin = request.headers.get("Origin")
-            if origin and origin.split("://", 1)[-1] != request.host:
+            if origin and origin.split("://", 1)[-1] != request.host and origin != trusted_origin():
                 raise ApiError(403, "Cross-site requests are not allowed.")
 
 

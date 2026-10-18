@@ -1,0 +1,52 @@
+name: Deploy frontend to GitHub Pages
+
+# Builds apps/web into a static bundle (tools/build_static_site.py) and publishes it to GitHub
+# Pages. This deploys the *frontend only* - GitHub Pages can't run the Flask backend, so the
+# bundle calls a separately hosted API (see apps/web/gh-pages-config.js, the one file to edit
+# with that API's URL, and DATASCOPIA_TRUSTED_ORIGIN in .env.example/render.yaml so sign-in works
+# cross-origin too).
+#
+# One-time setup: repo Settings -> Pages -> Source: GitHub Actions. After that, every push to
+# main that touches apps/web or this script redeploys automatically.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - "tools/build_static_site.py"
+      - ".github/workflows/gh-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build static site
+        run: python tools/build_static_site.py
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

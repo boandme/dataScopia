@@ -12,7 +12,10 @@ async function api(path, {method = 'GET', body} = {}) {
     method,
     headers: body ? {'Content-Type': 'application/json'} : undefined,
     body: body ? JSON.stringify(body) : undefined,
-    credentials: 'same-origin',
+    // 'include' (not 'same-origin') so the session cookie still flows when this app is a GitHub
+    // Pages build talking to a separately hosted API (DATASCOPIA_TRUSTED_ORIGIN) - for a same-origin
+    // deployment the two are equivalent, so this has no effect on the default setup.
+    credentials: 'include',
   });
   let data = null;
   try { data = await response.json(); } catch (error) { data = null; }

@@ -63,9 +63,19 @@ from errors import ApiError
 
 WEB_DIR = PROJECT_ROOT / "apps" / "web"
 
-# The frontend is plain static files (index.html + styles.css + app.js) served from the same origin.
+# The frontend is normally plain static files (index.html + styles.css + app.js) served from the
+# same origin. If DATASCOPIA_TRUSTED_ORIGIN is set (a frontend hosted elsewhere, e.g. GitHub Pages -
+# see tools/build_static_site.py), CORS is scoped to exactly that one origin with credentials
+# allowed, instead of the default wide-open "*" (which the CORS spec forbids combining with
+# credentials anyway - a wildcard can only ever serve anonymous, cookie-less requests). Left unset,
+# this is unchanged from before: open to anyone, no cookies - fine, since every credentialed route
+# also requires the session cookie, which only a same-origin or explicitly trusted caller can get.
 app = Flask(os.getenv("APP_TITLE", "DataScopia"), static_folder=str(WEB_DIR), static_url_path="/assets")
-CORS(app)
+_trusted = accounts.trusted_origin()
+if _trusted:
+    CORS(app, resources={r"/*": {"origins": _trusted, "supports_credentials": True}})
+else:
+    CORS(app)
 # Flask's default is unlimited request body size - without a cap, "Use your own file" could accept
 # an upload large enough to exhaust memory on a small instance before the app ever gets a chance to
 # reject it gracefully. A request over this returns a clean 413 instead of an OOM crash.

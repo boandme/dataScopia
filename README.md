@@ -4,10 +4,9 @@
 
 ## Run DataScopia
 
-From the project root:
-
-```powershell
-cd "C:\Users\vyom\OneDrive\Desktop\code\kaggle_datasetAnalysis"
+```bash
+git clone https://github.com/boandme/kaggle_datasetAnalysis.git
+cd kaggle_datasetAnalysis
 python run.py
 ```
 
@@ -54,6 +53,17 @@ Two opt-in paths exist per source for when a full copy is actually needed:
 - **Download full dataset** (`/datasets/download-file`, Kaggle only for now) returns a ZIP archive of the raw files for the user to keep.
 
 Neither full-dataset path is required to get a Research Snapshot, recommended visualizations, or AI analysis.
+
+## Deploying the frontend to GitHub Pages
+
+GitHub Pages only serves static files — it can't run this project's Flask backend — so a GitHub Pages deploy is the *frontend alone*, talking to a separately hosted copy of the API (for example the [Render deployment](#deploying-to-render-a-real-hosted-url) above). This is optional: running `python run.py` or deploying to Render already serves the frontend and API together from one URL with nothing further needed. Use GitHub Pages instead if you specifically want the frontend on a `github.io` URL.
+
+1. **Deploy the backend first** (see [Deploying to Render](#deploying-to-render-a-real-hosted-url) above) and note its URL, e.g. `https://your-app.onrender.com`.
+2. **Point the static build at it**: edit [`apps/web/gh-pages-config.js`](apps/web/gh-pages-config.js) and set `window.KAGGLE_API_BASE` to that URL.
+3. **Enable Pages**: in this repo's Settings → Pages, set Source to **GitHub Actions**. The included workflow ([`.github/workflows/gh-pages.yml`](.github/workflows/gh-pages.yml)) then builds and deploys automatically on every push to `main` that touches `apps/web/` (or run it manually from the Actions tab).
+4. **Allow sign-in across origins** (optional): anonymous search, analysis, charts and exports all work with no further setup. For sign-in and save-to-account to work *from the GitHub Pages URL*, set `DATASCOPIA_TRUSTED_ORIGIN` on the backend (Render env var, or locally in `.env`) to the exact Pages origin, e.g. `https://you.github.io` — see the comment above that variable in [`.env.example`](.env.example) and [`render.yaml`](render.yaml). Leaving it unset keeps everything working exactly as it does today for a same-origin deployment; it only needs to be set at all once a frontend and backend live on two different origins.
+
+To preview the static build locally before pushing: `python tools/build_static_site.py` writes it to `dist/`, then `python -m http.server 8080 -d dist` (opening `dist/index.html` directly as a `file://` URL won't work, since the relative asset paths need an actual HTTP server).
 
 A research-focused open-source platform for exploring, analyzing, and understanding datasets from Kaggle and Hugging Face with the help of intelligent automated analysis, interactive visualizations, and an AI-assisted research workflow.
 
@@ -214,6 +224,7 @@ kaggle_datasetAnalysis/
 - **v1.3** (2026-09-30) — **Multi-dataset comparison in Visualization.** "Compare another dataset" federates search across Kaggle and Hugging Face without touching the primary dataset the rest of the app reads; each chart card gets its own "Data" selector, so different charts can show different datasets side by side - scoped to Visualization only, by design. Fixed a real bug found while testing it: the demo dataset's analysis never included preview rows, so "Load demo data" silently left Visualization showing "load a dataset first" even with data loaded. Fixed the Hugging Face (and Kaggle) results grid cutting off descriptions and letting a long license chip crowd the Analyze button - cards now clamp content and pin actions to the bottom so a row lines up cleanly. Generalized the dataset-graph crawler to `tools/index_catalogue.py --provider kaggle|huggingface|both`.
 - **v1.31** (2026-09-30) — **Google sign-in, completed.** It was already wired up correctly from the Firebase integration; this pass added the one real gap (your Google profile photo now shows in the header/account menu instead of just initials, with a broken-image fallback) and fixed the `Cross-Origin-Opener-Policy` console error every popup sign-in triggered, by sending the header Firebase's own docs recommend (`same-origin-allow-popups`). A related warning from Google's own sign-in pages is outside this app's control and has always been non-fatal (Firebase falls back to a different cross-window channel) - sign-in completes despite it.
 - **v1.32** (2026-10-02) — **Pre-launch deployment audit.** Found and fixed a real deployment-breaking bug: `python-dotenv` is imported by the app's entry point but was never in `requirements.txt`, so a genuinely fresh install - exactly what Render's build does - would have crashed on startup; verified by actually building into a clean virtualenv and booting the real `waitress` production command. Added a request-size cap (`DATASCOPIA_MAX_UPLOAD_MB`, default 150MB) - file upload had no limit at all, risking an out-of-memory crash on a small instance. `render.yaml` now documents the Firebase-vs-persistent-disk tradeoff directly, where the version history above already pointed, and lists `HF_TOKEN` as configurable.
+- **v1.33** (2026-10-17) — **GitHub Pages deployment.** A new build script (`tools/build_static_site.py`) and GitHub Actions workflow (`.github/workflows/gh-pages.yml`) package `apps/web` as a standalone static site that talks to a separately hosted backend - see [Deploying the frontend to GitHub Pages](#deploying-the-frontend-to-github-pages). Cross-origin sign-in is opt-in via `DATASCOPIA_TRUSTED_ORIGIN` (unset by default, so a normal same-origin deployment is unaffected): the session cookie becomes `SameSite=None; Secure` and CORS/CSRF trust exactly that one configured origin for credentialed requests - never a wildcard. Verified live end-to-end (two real local servers on different origins, a real browser session): registering an account, the session cookie persisting across a reload, and zero CORS errors - which surfaced and fixed a real bug in the process, where the frontend's account/session fetches were sent with `credentials: 'same-origin'`, so the session cookie would never have been sent or stored cross-origin at all. Also released under the MIT License (`LICENSE`), with project docs and example commands rewritten to be fully public-facing.
 
 ## Roadmap: what's still needed to be a genuinely useful tool
 
@@ -256,7 +267,9 @@ This project is intended to be community-friendly and contributor-driven. The de
 
 ## Licensing and Responsibility
 
-The platform must respect dataset licensing, the Kaggle and Hugging Face API terms, and platform usage restrictions. The software should be built to support compliant usage and give users clear information about whether data can be downloaded, redistributed, or exported.
+This software is released under the [MIT License](LICENSE) - use, modify and redistribute it freely.
+
+That's separate from the licensing of the *data* people analyze with it: the platform respects dataset licensing, the Kaggle and Hugging Face API terms, and platform usage restrictions, and gives users clear information about whether a given dataset can be downloaded, redistributed, or exported.
 
 ## Status
 

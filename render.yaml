@@ -51,3 +51,9 @@ services:
         sync: false
       - key: DATASCOPIA_AUTH
         value: firebase
+      # Only needed if you're also deploying apps/web as a static site on GitHub Pages (see
+      # tools/build_static_site.py) - set to that site's exact origin (e.g. https://you.github.io,
+      # no trailing slash) so sign-in/save-to-account works from it too. Leave this var out of the
+      # dashboard entirely if this Render service is the only place the app is hosted.
+      - key: DATASCOPIA_TRUSTED_ORIGIN
+        sync: false

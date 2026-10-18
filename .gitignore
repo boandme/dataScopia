@@ -10,3 +10,6 @@ data/
 # Firebase service-account keys must never be committed
 *service-account*.json
 *firebase-adminsdk*.json
+
+# Build output of tools/build_static_site.py (the GitHub Pages bundle) - generated, not source
+dist/

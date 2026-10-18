@@ -40,7 +40,9 @@ function friendly(error) {
 }
 
 async function serverPost(path, body) {
-  const response = await fetch(`${API_BASE}${path}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin', body: JSON.stringify(body)});
+  // 'include' so the session cookie still flows for a cross-origin GitHub Pages + trusted-origin
+  // API deployment; equivalent to 'same-origin' for the default same-origin deployment.
+  const response = await fetch(`${API_BASE}${path}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'include', body: JSON.stringify(body)});
   let data = null;
   try { data = await response.json(); } catch (error) { data = null; }
   if (!response.ok) throw new Error((data && data.detail) || `Request failed (${response.status}).`);
@@ -48,7 +50,7 @@ async function serverPost(path, body) {
 }
 
 async function boot() {
-  const configResponse = await fetch(`${API_BASE}/api/auth/config`, {credentials: 'same-origin'});
+  const configResponse = await fetch(`${API_BASE}/api/auth/config`, {credentials: 'include'});
   const config = await configResponse.json();
   if (config.mode !== 'firebase' || !config.firebase) return null;
 
