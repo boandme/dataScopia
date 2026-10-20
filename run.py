@@ -109,7 +109,11 @@ def _bind_server(app, make_server, host: str, start_port: int, attempts: int):
     )
 
 
-def main() -> None:
+def start_server():
+    """Set up and bind the real server (shared by this CLI entry point and desktop_app.py's
+    native-window entry point) without starting to serve yet - the caller decides how: block the
+    main thread (this file's main(), for a terminal/dev run) or run it in a background thread
+    behind a native window (desktop_app.py, for the packaged app)."""
     try:
         from werkzeug.serving import BaseWSGIServer, ThreadedWSGIServer, make_server
     except ImportError:
@@ -131,6 +135,11 @@ def main() -> None:
     url = f"http://{HOST}:{port}"
     if port != DEFAULT_PORT:
         print(f"Port {DEFAULT_PORT} was busy - using {port} instead.", flush=True)
+    return server, url
+
+
+def main() -> None:
+    server, url = start_server()
     print(f"DataScopia is running at {url}", flush=True)
 
     threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()

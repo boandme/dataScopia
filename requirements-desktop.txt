@@ -1,0 +1,5 @@
+# Only needed to build/run the packaged Windows desktop app (desktop_app.py,
+# packaging/datascopia.spec) - never installed for the hosted web deployment (Render reads plain
+# requirements.txt), since pywebview pulls in Windows-specific packages (pythonnet, clr_loader)
+# that have no reason to be on a Linux web server.
+pywebview>=6.2.0

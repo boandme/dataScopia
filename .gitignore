@@ -14,6 +14,7 @@ data/
 # Build output of tools/build_static_site.py (the GitHub Pages bundle) - generated, not source
 dist/
 
-# Build output of packaging/datascopia.spec (the Windows desktop build) - generated, not source
+# Local test output if building the Windows desktop app from here (see boandme/dataScopia-desktop,
+# which holds the actual packaging config and does this for real via CI)
 dist_desktop/
 build_desktop/
