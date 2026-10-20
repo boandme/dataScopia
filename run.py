@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import threading
 import webbrowser
@@ -22,8 +23,43 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 MAX_PORT_ATTEMPTS = 10
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+# A PyInstaller build runs this exact script, but as compiled bytecode with no real file on disk -
+# __file__ isn't a usable path there, so sys._MEIPASS (the bundle's extracted/collected root,
+# set by PyInstaller in both onefile and onedir builds) stands in for it instead. Either way this
+# resolves to the directory actually holding apps/ and packages/ as real files, which main.py's
+# own dynamic import (see _load_app below) and its own PROJECT_ROOT computation both need.
+PROJECT_ROOT = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 MAIN_PATH = PROJECT_ROOT / "apps" / "api" / "app" / "main.py"
+
+
+def _default_desktop_data_dir() -> Path:
+    """Where a packaged desktop build keeps its database and uploaded files by default - never
+    inside the install directory itself, which a Program Files-style install makes read-only to
+    a normal user and which a reinstall/upgrade could wipe. %LOCALAPPDATA% is the standard
+    per-user writable location for exactly this on Windows."""
+    base = os.getenv("LOCALAPPDATA") or str(Path.home())
+    return Path(base) / "DataScopia"
+
+
+def _apply_desktop_defaults() -> None:
+    """Only takes effect in a frozen build, and only for variables the user/host hasn't already
+    set - a source checkout or a hosted deployment (Render, etc.) keeps using whatever
+    DATASCOPIA_DB/DATASCOPIA_DATA_DIR already resolve to (see store.py)."""
+    if not getattr(sys, "frozen", False):
+        return
+    data_dir = _default_desktop_data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("DATASCOPIA_DB", str(data_dir / "datascopia.db"))
+    os.environ.setdefault("DATASCOPIA_DATA_DIR", str(data_dir))
+
+    # Lets a user drop a .env with their Kaggle/Firebase credentials right next to the installed
+    # .exe - the obvious place to look - rather than inside the bundle's internal data folder,
+    # which is where main.py's own PROJECT_ROOT/.env lookup resolves to once frozen. Harmless
+    # no-op if the file doesn't exist; main.py's own load_dotenv(..., override=True) runs right
+    # after this and won't clear anything this already set, since it has nothing to override with.
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(sys.executable).resolve().parent / ".env", override=False)
 
 
 def _load_app():
@@ -89,6 +125,7 @@ def main() -> None:
     BaseWSGIServer.allow_reuse_address = False
     ThreadedWSGIServer.allow_reuse_address = False
 
+    _apply_desktop_defaults()
     app = _load_app()
     server, port = _bind_server(app, make_server, HOST, DEFAULT_PORT, MAX_PORT_ATTEMPTS)
     url = f"http://{HOST}:{port}"

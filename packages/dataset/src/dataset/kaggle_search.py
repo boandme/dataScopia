@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -11,7 +12,12 @@ import requests
 
 
 KAGGLE_API_BASE = "https://www.kaggle.com/api/v1"
-PROJECT_ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
+# In a PyInstaller build this module is loaded through the normal frozen import mechanism (not
+# from a real file on disk), so __file__ doesn't have the same real parent directories a source
+# checkout has - sys._MEIPASS (the bundle's root, see run.py) stands in for it there instead.
+PROJECT_ENV_FILE = (
+    Path(sys._MEIPASS) / ".env" if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[4] / ".env"
+)
 
 
 def _ensure_kaggle_config_file() -> bool:

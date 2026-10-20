@@ -13,3 +13,7 @@ data/
 
 # Build output of tools/build_static_site.py (the GitHub Pages bundle) - generated, not source
 dist/
+
+# Build output of packaging/datascopia.spec (the Windows desktop build) - generated, not source
+dist_desktop/
+build_desktop/
