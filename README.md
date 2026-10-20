@@ -2,11 +2,15 @@
 
 *A Kaggle + Hugging Face Dataset Analysis & AI Research Workspace.*
 
+**Windows users:** grab the standalone app (no Python setup needed) from
+[dataScopia-desktop releases](https://github.com/boandme/dataScopia-desktop/releases/latest) -
+see that repo for details. Everyone else, run it from source below.
+
 ## Run DataScopia
 
 ```bash
-git clone https://github.com/boandme/kaggle_datasetAnalysis.git
-cd kaggle_datasetAnalysis
+git clone https://github.com/boandme/dataScopia.git
+cd dataScopia
 python run.py
 ```
 
