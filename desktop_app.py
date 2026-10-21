@@ -15,6 +15,7 @@ Usage:
 
 from __future__ import annotations
 
+import ctypes
 import sys
 import threading
 
@@ -23,9 +24,63 @@ import webview
 import run
 
 WINDOW_TITLE = "DataScopia"
+_MUTEX_NAME = "Global\\DataScopiaDesktopSingleInstance"
+ERROR_ALREADY_EXISTS = 183
+
+
+def _focus_existing_window() -> bool:
+    """True if another DataScopia window was found and brought to the front.
+
+    Not a plain FindWindowW(None, "DataScopia") exact-title lookup: the app changes the page
+    (and so the native window's) title on navigation - e.g. "Visualization · DataScopia" -
+    so only the initial launch screen is ever titled exactly "DataScopia". Enumerating windows
+    and matching the suffix instead finds the real window regardless of which page it's on."""
+    found = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def _enum_proc(hwnd, _lparam):
+        length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+        if length == 0:
+            return True
+        buffer = ctypes.create_unicode_buffer(length + 1)
+        ctypes.windll.user32.GetWindowTextW(hwnd, buffer, length + 1)
+        if buffer.value == WINDOW_TITLE or buffer.value.endswith(f"· {WINDOW_TITLE}"):
+            found.append(hwnd)
+            return False
+        return True
+
+    ctypes.windll.user32.EnumWindows(_enum_proc, 0)
+    if not found:
+        return False
+    SW_RESTORE = 9
+    ctypes.windll.user32.ShowWindow(found[0], SW_RESTORE)
+    ctypes.windll.user32.SetForegroundWindow(found[0])
+    return True
+
+
+def _acquire_single_instance_lock():
+    """A named kernel mutex, not a lock file: Windows releases it automatically the instant the
+    owning process exits for any reason (including a crash), so there's no stale-lock case to
+    clean up - unlike a lock file, which a crash would leave behind, permanently blocking every
+    future launch until a user manually deletes it. Returns the mutex handle (keep it referenced
+    for the process lifetime - a GC'd handle releases the mutex) or None if another instance
+    already holds it."""
+    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
+    if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        return None
+    return mutex
 
 
 def main() -> None:
+    lock = _acquire_single_instance_lock()
+    if lock is None:
+        # Double-launching (e.g. double-clicking the exe twice) would otherwise start a second,
+        # fully independent server + window rather than reusing the running one - confusing, and
+        # wastes real memory (this app's own dependencies - pandas/numpy/scipy - aren't light).
+        if not _focus_existing_window():
+            ctypes.windll.user32.MessageBoxW(0, "DataScopia is already running.", WINDOW_TITLE, 0x40)
+        return
+
     server, url = run.start_server()
 
     # daemon=True: if anything goes wrong with the window below, this thread dying with the
@@ -53,8 +108,6 @@ if __name__ == "__main__":
         # (most likely cause in practice: the WebView2 runtime genuinely missing, not something
         # the app can fix for them - see README for the one-time runtime installer link).
         try:
-            import ctypes
-
             ctypes.windll.user32.MessageBoxW(0, str(exc), f"{WINDOW_TITLE} failed to start", 0x10)
         except Exception:  # noqa: BLE001
             pass
