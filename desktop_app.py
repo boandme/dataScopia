@@ -18,6 +18,7 @@ from __future__ import annotations
 import ctypes
 import sys
 import threading
+import winreg
 
 import webview
 
@@ -26,6 +27,31 @@ import run
 WINDOW_TITLE = "DataScopia"
 _MUTEX_NAME = "Global\\DataScopiaDesktopSingleInstance"
 ERROR_ALREADY_EXISTS = 183
+
+# The WebView2 Runtime is what actually renders the app window (see module docstring). It's a
+# standard Windows component - built into Windows 11 from release, and pushed to Windows 10 via
+# Windows Update since 2022 - so this is normally a no-op, but an old/unpatched or locked-down
+# Windows 10 machine could genuinely lack it. Microsoft's own documented way to detect it is this
+# registry key, under any of these three locations depending on whether it was installed
+# per-machine (32- or 64-bit registry view) or per-user. Checked explicitly, before webview even
+# tries to start, purely so a machine that's genuinely missing it gets a message that tells it
+# what to do, instead of a pythonnet/COM error that doesn't.
+_WEBVIEW2_CLIENT_KEY = r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+_WEBVIEW2_DOWNLOAD_URL = "https://developer.microsoft.com/microsoft-edge/webview2/"
+
+
+def _webview2_installed() -> bool:
+    for hive, subkey in (
+        (winreg.HKEY_LOCAL_MACHINE, _WEBVIEW2_CLIENT_KEY),
+        (winreg.HKEY_LOCAL_MACHINE, _WEBVIEW2_CLIENT_KEY.replace("Microsoft\\", "WOW6432Node\\Microsoft\\", 1)),
+        (winreg.HKEY_CURRENT_USER, _WEBVIEW2_CLIENT_KEY),
+    ):
+        try:
+            with winreg.OpenKey(hive, subkey):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _focus_existing_window() -> bool:
@@ -79,6 +105,18 @@ def main() -> None:
         # wastes real memory (this app's own dependencies - pandas/numpy/scipy - aren't light).
         if not _focus_existing_window():
             ctypes.windll.user32.MessageBoxW(0, "DataScopia is already running.", WINDOW_TITLE, 0x40)
+        return
+
+    if not _webview2_installed():
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            "DataScopia needs the Microsoft Edge WebView2 Runtime to show its window, and this "
+            "PC doesn't have it installed. Most Windows 10/11 PCs already have it - this is "
+            "unusual.\n\nInstall it (one-time, free) from:\n" + _WEBVIEW2_DOWNLOAD_URL
+            + "\n\nThen run DataScopia again.",
+            WINDOW_TITLE,
+            0x30,
+        )
         return
 
     server, url = run.start_server()
